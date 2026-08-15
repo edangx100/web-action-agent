@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Rejects commit messages that reference private planning documents.
+#
+# This repo is public. The design documents that drive it are not, and their
+# filenames, section numbers, and task IDs must never appear in public history.
+#
+# Enable (required once per clone):
+#   git config core.hooksPath .githooks
+#
+# Bypass for a single commit, if you are certain:
+#   git commit --no-verify
+
+set -euo pipefail
+
+msg_file="$1"
+
+# Strip comment lines and the diff git appends under --verbose before matching,
+# so a filename appearing in the diff does not trip the hook.
+subject_and_body="$(sed -e '/^#/d' -e '/^diff --git /,$d' "$msg_file")"
+
+patterns=(
+  '\bproj[_ -]?idea\b'
+  '\bspec[_ -]?qns\b'
+  '\bspec\.md\b'
+  '\btasks\.md\b'
+  "\\bspec('s)?\\b"
+  '\bspecs\b'
+  '\bsuggested[_ -]ans\b'
+  '\btask breakdown\b'
+  '§'
+  # Task IDs from the private breakdown. Update this pattern to match whatever
+  # ID convention TASKS.md actually adopts. Bare "task" is deliberately NOT
+  # blocked — it is core domain vocabulary in this project.
+  '\b(T|TASK)-[0-9]+\b'
+)
+
+hits=()
+for pattern in "${patterns[@]}"; do
+  if match="$(printf '%s' "$subject_and_body" | grep -inE "$pattern" || true)"; then
+    [ -n "$match" ] && hits+=("$match")
+  fi
+done
+
+if [ ${#hits[@]} -gt 0 ]; then
+  cat >&2 <<'EOF'
+commit-msg: rejected — the message references private planning documents.
+
+This repository is public. Commit messages must not mention SPEC, TASKS,
+PROJ_IDEA, spec section numbers (§), or task IDs. Describe the change on its
+own terms instead.
+
+  Rejected: Implement Observer per SPEC §5.1
+  Rejected: Close T-014 (validator retry loop)
+  Accepted: Add Observer: DOM distillation and Set-of-Marks annotation
+
+Offending lines:
+EOF
+  printf '  %s\n' "${hits[@]}" >&2
+  cat >&2 <<'EOF'
+
+Reword the message, or bypass with --no-verify if this is a false positive.
+EOF
+  exit 1
+fi
+
+exit 0

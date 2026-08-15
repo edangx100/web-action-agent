@@ -1,0 +1,41 @@
+# Private planning documents — these belong in the private planning repo and
+# must never be committed here. Listed defensively in case one is ever copied in.
+SPEC.md
+SPEC_*.md
+TASKS.md
+PROJ_IDEA.md
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.key
+
+# Run artifacts
+runs/
+skills/
+*.har
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local agent guidance — stays on this machine, never published
+CLAUDE.md
