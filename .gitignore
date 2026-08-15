@@ -36,6 +36,3 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
-
-# Local agent guidance — stays on this machine, never published
-CLAUDE.md
