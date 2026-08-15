@@ -5,7 +5,7 @@ Only the command surface is defined here; the agent loop is not implemented yet.
 
 import sys
 
-USAGE = """usage: webpilot <command> [args]
+USAGE = """usage: waa <command> [args]
 
 commands:
   run "<task>"          run one natural-language task end to end
@@ -26,11 +26,11 @@ def main() -> int:
 
     command = argv[0]
     if command not in COMMANDS:
-        print(f"webpilot: unknown command {command!r}\n", file=sys.stderr)
+        print(f"waa: unknown command {command!r}\n", file=sys.stderr)
         print(USAGE, file=sys.stderr)
         return 2
 
-    print(f"webpilot: {command!r} is not implemented yet", file=sys.stderr)
+    print(f"waa: {command!r} is not implemented yet", file=sys.stderr)
     return 1
 
 

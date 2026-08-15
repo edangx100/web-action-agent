@@ -1,9 +1,9 @@
-# WebPilot
+# web-action-agent
 
 A self-improving multimodal web action agent.
 
-WebPilot takes a natural-language task — *"Search Hacker News for 'Rust async'
-and open the top result"* — perceives the page through both its DOM and an
+It takes a natural-language task — *"Search Hacker News for 'Rust async' and
+open the top result"* — perceives the page through both its DOM and an
 annotated screenshot, decides the next action with an LLM planner, executes it
 via Playwright, and self-evaluates on a small benchmark. Successful runs are
 distilled into reusable, verified skills, so repeated tasks get cheaper, faster,
@@ -74,24 +74,25 @@ playwright install chromium
 ## Usage
 
 ```bash
-webpilot run "Search Hacker News for 'Rust async' and open the top result"
+waa run "Search Hacker News for 'Rust async' and open the top result"
 ```
 
-Planned subcommands:
+`waa` is the short alias; `web-action-agent` works identically.
 
 | Command | Purpose |
 |---|---|
-| `webpilot run "<task>"` | Run one task end to end |
-| `webpilot eval` | Run the benchmark suite with layered verdicts |
-| `webpilot induce <run-folder>` | Distill successful traces into candidate skills |
-| `webpilot skills list \| show \| retire` | Inspect and curate the skill library |
-| `webpilot judge <runs-dir>` | Produce verdicts and the agreement report |
+| `waa run "<task>"` | Run one task end to end |
+| `waa eval` | Run the benchmark suite with layered verdicts |
+| `waa induce <run-folder>` | Distill successful traces into candidate skills |
+| `waa skills list \| show \| retire` | Inspect and curate the skill library |
+| `waa judge <runs-dir>` | Produce verdicts and the agreement report |
 
 ## Configuration
 
 The model endpoint is pure configuration — base URL, API key, and model name.
 The same code runs unmodified against a hosted aggregator, a first-party
-provider endpoint, or a local vLLM deployment.
+provider endpoint, or a local vLLM deployment. Copy `.env.example` to `.env`
+and fill in the values.
 
 ## Development
 

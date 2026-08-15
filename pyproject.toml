@@ -1,5 +1,5 @@
 [project]
-name = "webpilot"
+name = "web-action-agent"
 version = "0.0.1"
 description = "A self-improving multimodal web action agent"
 readme = "README.md"
@@ -22,14 +22,15 @@ dev = [
 ]
 
 [project.scripts]
-webpilot = "webpilot.cli:main"
+web-action-agent = "web_action_agent.cli:main"
+waa = "web_action_agent.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/webpilot"]
+packages = ["src/web_action_agent"]
 
 [tool.ruff]
 line-length = 100
