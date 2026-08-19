@@ -14,16 +14,16 @@ dependencies = [
     "pyyaml>=6.0",
 ]
 
-[project.optional-dependencies]
+[project.scripts]
+web-action-agent = "web_action_agent.cli:main"
+waa = "web_action_agent.cli:main"
+
+[dependency-groups]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.6",
 ]
-
-[project.scripts]
-web-action-agent = "web_action_agent.cli:main"
-waa = "web_action_agent.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -38,3 +38,9 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "unit: pure Python, no browser and no network",
+    "fixture: runs against the local static fixture site",
+    "mock_llm: uses stubbed or recorded model responses",
+    "live: needs the real web or a real model endpoint; excluded from CI",
+]

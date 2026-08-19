@@ -60,14 +60,15 @@ annotated screenshots, an action log, cost accounting, and a verdict.
 ## Install
 
 ```bash
-uv sync
+uv sync                              # creates .venv from uv.lock
 uv run playwright install chromium
 ```
 
-Or with pip:
+Or with pip and no `uv` at all:
 
 ```bash
-pip install -r requirements.txt
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt      # pinned, and installs this package
 playwright install chromium
 ```
 
@@ -96,10 +97,24 @@ and fill in the values.
 
 ## Development
 
+A `uv`-managed `.venv` is the development environment; a system or user Python
+is never used directly.
+
 ```bash
 git config core.hooksPath .githooks   # required once per clone
-uv sync --all-extras
+uv venv                               # Python from .python-version
+uv sync                               # runtime + dev dependencies, from uv.lock
 uv run pytest
+```
+
+Every command runs through `uv run`, or inside the activated `.venv`.
+
+Dependencies are declared in `pyproject.toml` and pinned in `uv.lock`.
+`requirements.txt` is generated from that lockfile — never edited by hand — and
+regenerated whenever the lockfile changes:
+
+```bash
+uv export --format requirements-txt --no-hashes --no-dev --no-editable -o requirements.txt
 ```
 
 Tests run against the static HTML fixture site in `tests/fixtures/` — no live
