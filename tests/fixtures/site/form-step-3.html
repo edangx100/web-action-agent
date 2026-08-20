@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Membership application, step 3 — Northgate Public Library</title>
+  <link rel="stylesheet" href="static/site.css">
+</head>
+<body data-page="form-step-3">
+  <header class="site">
+    <div class="wordmark">Northgate Public Library</div>
+    <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="search.html">Search the catalogue</a>
+      <a href="form-step-1.html">Join the library</a>
+      <a href="article.html">Reading room news</a>
+      <a href="consent.html">Member notices</a>
+    </nav>
+  </header>
+
+  <main>
+    <p class="steps" id="step-indicator">Step 3 of 3</p>
+    <h1 id="form-heading">Your home branch</h1>
+    <p class="lede">You can borrow from any branch; this is where holds are sent.</p>
+
+    <form id="application-form" action="form-complete.html" method="get" data-carry>
+      <label for="applicant-branch">Home branch</label>
+      <select id="applicant-branch" name="branch" required>
+        <option value="">Choose a branch</option>
+        <option value="Northgate Central">Northgate Central</option>
+        <option value="Riverside">Riverside</option>
+        <option value="Hollow Lane">Hollow Lane</option>
+      </select>
+      <br>
+      <button type="submit" id="submit-button">Submit application</button>
+    </form>
+
+    <p><a href="form-step-2.html" id="back-link">Back to step 2</a></p>
+  </main>
+
+  <script src="static/form.js"></script>
+</body>
+</html>

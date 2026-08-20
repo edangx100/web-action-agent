@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Membership application, step 2 — Northgate Public Library</title>
+  <link rel="stylesheet" href="static/site.css">
+</head>
+<body data-page="form-step-2">
+  <header class="site">
+    <div class="wordmark">Northgate Public Library</div>
+    <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="search.html">Search the catalogue</a>
+      <a href="form-step-1.html">Join the library</a>
+      <a href="article.html">Reading room news</a>
+      <a href="consent.html">Member notices</a>
+    </nav>
+  </header>
+
+  <main>
+    <p class="steps" id="step-indicator">Step 2 of 3</p>
+    <h1 id="form-heading">Where we send your card</h1>
+    <p class="lede">We use your email only for loan reminders.</p>
+
+    <form id="application-form" action="form-step-3.html" method="get" data-carry>
+      <label for="applicant-email">Email address</label>
+      <input type="email" id="applicant-email" name="email" required autocomplete="off">
+      <br>
+      <button type="submit" id="next-button">Continue</button>
+    </form>
+
+    <p><a href="form-step-1.html" id="back-link">Back to step 1</a></p>
+  </main>
+
+  <script src="static/form.js"></script>
+</body>
+</html>

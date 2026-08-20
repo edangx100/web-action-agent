@@ -1,0 +1,132 @@
+/* One stylesheet for the whole fixture site. Deliberately plain: the point is
+   stable, predictable geometry at the 1280x800 viewport the agent runs at, not
+   visual flair. */
+
+:root {
+  --ink: #1c1c1c;
+  --muted: #5a5a5a;
+  --rule: #d5d5d5;
+  --accent: #14508c;
+  --page: #ffffff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font: 16px/1.55 Georgia, "Times New Roman", serif;
+}
+
+header.site {
+  border-bottom: 2px solid var(--ink);
+  padding: 16px 32px;
+}
+
+header.site .wordmark {
+  font-size: 20px;
+  font-weight: bold;
+  letter-spacing: 0.02em;
+}
+
+nav.site a {
+  color: var(--accent);
+  margin-right: 18px;
+  text-decoration: none;
+}
+
+nav.site a:hover { text-decoration: underline; }
+
+main {
+  margin: 0 auto;
+  max-width: 780px;
+  padding: 28px 32px 64px;
+}
+
+h1 { font-size: 28px; margin: 0 0 12px; }
+h2 { font-size: 21px; margin: 32px 0 8px; }
+p  { margin: 0 0 14px; }
+
+.lede { color: var(--muted); font-size: 17px; }
+
+label {
+  display: block;
+  font-weight: bold;
+  margin: 18px 0 6px;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="search"],
+select {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  width: 100%;
+  max-width: 420px;
+}
+
+button {
+  font: inherit;
+  padding: 9px 18px;
+  margin-top: 18px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: #fff;
+  color: var(--accent);
+}
+
+ul.results { list-style: none; margin: 0; padding: 0; }
+
+ul.results li {
+  border-bottom: 1px solid var(--rule);
+  padding: 14px 0;
+}
+
+ul.results a { color: var(--accent); font-size: 18px; }
+
+ul.results .tags { color: var(--muted); font-size: 14px; }
+
+.steps { color: var(--muted); font-size: 14px; letter-spacing: 0.04em; }
+
+dl.summary dt { font-weight: bold; margin-top: 12px; }
+dl.summary dd { margin: 2px 0 0; }
+
+.notice {
+  border-left: 4px solid var(--accent);
+  padding: 10px 14px;
+  background: #f3f6fa;
+}
+
+/* Consent overlay. It genuinely blocks the page beneath it: an agent has to
+   dismiss it before anything else on the page is clickable. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 20, 20, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.overlay[hidden] { display: none; }
+
+.modal {
+  background: #fff;
+  max-width: 460px;
+  padding: 24px 28px 28px;
+  border-radius: 4px;
+}
+
+.modal h2 { margin-top: 0; }
+
+.modal .actions { display: flex; gap: 12px; }

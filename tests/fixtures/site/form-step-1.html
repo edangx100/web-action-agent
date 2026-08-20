@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Membership application, step 1 — Northgate Public Library</title>
+  <link rel="stylesheet" href="static/site.css">
+</head>
+<body data-page="form-step-1">
+  <header class="site">
+    <div class="wordmark">Northgate Public Library</div>
+    <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="search.html">Search the catalogue</a>
+      <a href="form-step-1.html">Join the library</a>
+      <a href="article.html">Reading room news</a>
+      <a href="consent.html">Member notices</a>
+    </nav>
+  </header>
+
+  <main>
+    <p class="steps" id="step-indicator">Step 1 of 3</p>
+    <h1 id="form-heading">Your name</h1>
+    <p class="lede">Membership is free for anyone living or working in the borough.</p>
+
+    <form id="application-form" action="form-step-2.html" method="get" data-carry>
+      <label for="applicant-name">Full name</label>
+      <input type="text" id="applicant-name" name="name" required autocomplete="off">
+      <br>
+      <button type="submit" id="next-button">Continue</button>
+    </form>
+  </main>
+
+  <script src="static/form.js"></script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Member notices — Northgate Public Library</title>
+  <link rel="stylesheet" href="static/site.css">
+</head>
+<body data-page="consent">
+  <header class="site">
+    <div class="wordmark">Northgate Public Library</div>
+    <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="search.html">Search the catalogue</a>
+      <a href="form-step-1.html">Join the library</a>
+      <a href="article.html">Reading room news</a>
+      <a href="consent.html">Member notices</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1 id="notices-heading">Member notices</h1>
+    <p class="lede" id="consent-status">Awaiting your response to the data notice.</p>
+
+    <div id="notices" hidden>
+      <h2>Current notices</h2>
+      <ul>
+        <li id="notice-loan-period">The standard loan period becomes 28 days on 1 September 2026.</li>
+        <li id="notice-holds">Holds are kept at the desk for seven days, up from four.</li>
+        <li id="notice-fines">Fines on children's tickets are abolished in full.</li>
+      </ul>
+      <p>Questions go to the enquiries desk on the ground floor.</p>
+    </div>
+
+    <p id="restricted-message" hidden>
+      Notices stay hidden until the data notice is accepted. Reload the page to
+      decide again.
+    </p>
+  </main>
+
+  <!-- Deliberately a real blocker: the overlay covers the page, so anything
+       underneath it has to wait until one of these two buttons is pressed. -->
+  <div class="overlay" id="consent-modal" role="dialog" aria-modal="true" aria-labelledby="consent-title">
+    <div class="modal">
+      <h2 id="consent-title">Before you read on</h2>
+      <p>
+        We record which notices you open so we can tell which ones people miss.
+        No data leaves the library's own systems.
+      </p>
+      <div class="actions">
+        <button type="button" id="accept-consent">Accept</button>
+        <button type="button" class="secondary" id="decline-consent">Decline</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="static/consent.js"></script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Search the catalogue — Northgate Public Library</title>
+  <link rel="stylesheet" href="static/site.css">
+</head>
+<body data-page="search">
+  <header class="site">
+    <div class="wordmark">Northgate Public Library</div>
+    <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="search.html">Search the catalogue</a>
+      <a href="form-step-1.html">Join the library</a>
+      <a href="article.html">Reading room news</a>
+      <a href="consent.html">Member notices</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1 id="search-heading">Search the catalogue</h1>
+    <p class="lede">Records are matched on title and subject tags.</p>
+
+    <form id="search-form" action="results.html" method="get">
+      <label for="query">Search terms</label>
+      <input type="search" id="query" name="q" placeholder="e.g. membership" autocomplete="off">
+      <br>
+      <button type="submit" id="search-submit">Search</button>
+    </form>
+
+    <h2>Search tips</h2>
+    <ul>
+      <li>A single word matches more records than a phrase.</li>
+      <li>An empty search returns the whole catalogue.</li>
+      <li>Subject tags include <em>membership</em>, <em>archive</em>, <em>privacy</em>, and <em>reading room</em>.</li>
+    </ul>
+  </main>
+</body>
+</html>

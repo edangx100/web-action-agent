@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Search results — Northgate Public Library</title>
+  <link rel="stylesheet" href="static/site.css">
+</head>
+<body data-page="results">
+  <header class="site">
+    <div class="wordmark">Northgate Public Library</div>
+    <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="search.html">Search the catalogue</a>
+      <a href="form-step-1.html">Join the library</a>
+      <a href="article.html">Reading room news</a>
+      <a href="consent.html">Member notices</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1 id="results-heading">Search results</h1>
+    <p id="result-count" class="lede">No search has been run yet.</p>
+
+    <ul class="results" id="results-list"></ul>
+
+    <p id="no-results" hidden>No records match that search. Try a broader term.</p>
+
+    <form id="refine-form" action="results.html" method="get">
+      <label for="refine-query">Refine your search</label>
+      <input type="search" id="refine-query" name="q" autocomplete="off">
+      <br>
+      <button type="submit" id="refine-submit">Search again</button>
+    </form>
+  </main>
+
+  <script src="static/results.js"></script>
+</body>
+</html>
