@@ -117,8 +117,37 @@ regenerated whenever the lockfile changes:
 uv export --format requirements-txt --no-hashes --no-dev --no-editable -o requirements.txt
 ```
 
-Tests run against the static HTML fixture site in `tests/fixtures/` — no live
-web traffic and no API keys required.
+### Tests
+
+Every test declares what it needs to run, with exactly one marker. Collection
+fails if a test declares none, or more than one — the marker is what decides
+whether continuous integration runs it, so an unmarked test is one nobody is
+running.
+
+| Marker | Needs |
+|---|---|
+| `unit` | Nothing — pure Python, no browser and no network |
+| `fixture` | The static HTML site in `tests/fixtures/site/`, served locally |
+| `mock_llm` | Stubbed or recorded model responses |
+| `live` | The real web or a real model endpoint |
+
+```bash
+uv run pytest                      # everything except live
+uv run pytest -m unit              # one kind
+uv run pytest -m live              # opt in explicitly; needs network and a key
+```
+
+A bare `uv run pytest` excludes `live`, so the default run is offline, free,
+and needs no API key.
+
+### Continuous integration
+
+Pull requests run three jobs: `ruff check` and `ruff format --check`; the
+offline suite (`unit or fixture or mock_llm`) against a cached Chromium; and an
+install from `requirements.txt` into a plain virtual environment on a runner
+with no `uv`, which is what keeps the lockfile and the exported manifest from
+drifting apart. The test job asserts up front that its selection reaches no
+`live` test, and prints both counts.
 
 ## Safety
 

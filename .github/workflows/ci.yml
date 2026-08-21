@@ -1,0 +1,108 @@
+name: CI
+
+# Pull requests are the gate: nothing merges without this workflow passing.
+# Pushes to the default branch are checked too, so a direct commit or a
+# post-merge state that breaks the suite is still caught.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second push to a branch cancels the run still in flight for it. The old
+# result is about to be superseded anyway, and CI minutes are finite.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The offline suite, named once and reused by every step below. Tests marked
+  # `live` need the real web or a real model endpoint and are absent from this
+  # expression by design: continuous integration has neither a browser path to
+  # the public internet nor an API key, so a live test here could only fail or,
+  # worse, quietly cost money.
+  OFFLINE_MARKERS: unit or fixture or mock_llm
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  test:
+    name: Test (offline suite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      # Playwright's browser download is large and changes only when the
+      # pinned Playwright version does, which is exactly what the lockfile
+      # records -- so the lockfile hash is the cache key.
+      - name: Restore the Chromium download
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+
+      # Only Chromium: the agent drives one browser, and pulling three would
+      # triple the download for engines nothing tests against. This runs on a
+      # cache hit too -- the cache holds the browser, while `--with-deps`
+      # installs system libraries outside it that a fresh runner still lacks.
+      - name: Install Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Confirm no live-marked test can run in this job
+        run: |
+          selected=$(uv run pytest --collect-only -q \
+            -m "live and ($OFFLINE_MARKERS)" | grep -c '::' || true)
+          total=$(uv run pytest --collect-only -q -m "live" | grep -c '::' || true)
+          echo "live-marked tests in the suite:      $total"
+          echo "live-marked tests this job will run: $selected"
+          test "$selected" -eq 0
+
+      - name: Run the offline suite
+        run: uv run pytest -m "$OFFLINE_MARKERS"
+
+  consumer-install:
+    # The development environment is uv-managed, but nobody installing this
+    # project is obliged to have uv. This job is the other install path, on a
+    # machine that has never seen uv: a plain virtual environment and the
+    # exported manifest, which is how the lockfile and `requirements.txt` are
+    # kept from drifting apart unnoticed.
+    name: Install from requirements.txt (no uv)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install from the exported manifest alone
+        run: |
+          python -m venv /tmp/consumer
+          /tmp/consumer/bin/pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Check both entry points
+        run: |
+          /tmp/consumer/bin/waa --help
+          /tmp/consumer/bin/python -m web_action_agent --help

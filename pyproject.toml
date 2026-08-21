@@ -38,9 +38,22 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Every test declares exactly one of these, and `tests/conftest.py` fails the
+# run if one does not. The marker is what lets continuous integration select
+# the offline suite by name, instead of guessing which test needs a network or
+# an API key.
 markers = [
     "unit: pure Python, no browser and no network",
     "fixture: runs against the local static fixture site",
     "mock_llm: uses stubbed or recorded model responses",
     "live: needs the real web or a real model endpoint; excluded from CI",
 ]
+addopts = [
+    "--strict-markers",  # A mistyped marker is an error, not a silent no-op.
+    "--strict-config",   # Likewise for an unknown key in this table.
+    "-ra",               # Summarise every non-passing outcome at the end.
+    "-m",
+    "not live",          # A bare `pytest` stays offline; CI passes its own -m.
+]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
