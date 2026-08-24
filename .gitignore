@@ -4,17 +4,50 @@ SPEC.md
 SPEC_*.md
 TASKS.md
 PROJ_IDEA.md
+ARCH_REVIEW.md
 
-# Secrets
+# Secrets. Only the template is committed, and it carries variable names with
+# empty values — never a key.
 .env
 .env.*
 !.env.example
 *.key
+*.pem
 
-# Run artifacts
-runs/
+# Run artifacts.
+#
+# A run folder holds a screenshot per step of a live third-party site, and the
+# harness rewrites the tree on every pass, so `runs/` is local scratch. Three
+# things inside it are deliverables and stay committed: the one curated example
+# run, the aggregated results tables, and the human spot-check labels.
+#
+# `!runs/**/` re-includes directories at every depth, and it has to come first.
+# Git never looks inside an excluded directory, so without that line the
+# exceptions below could not match: the parent folder would have been skipped
+# before Git ever saw the file. Re-including a directory commits nothing on its
+# own — Git tracks files — so the three file patterns still decide everything.
+runs/**
+!runs/**/
+!runs/example/**
+!runs/**/results/**
+!runs/**/human_labels.jsonl
+
+# Skill library. The working library is a local cache the inducer rewrites on
+# every induction pass. The curated library published alongside the warm-pass
+# results is committed under its own exception when that pass produces it.
 skills/
+
+# Browser state and caches. Playwright's own browser downloads live outside the
+# repo, but its per-run output, profiles, traces, and recordings do not.
+.playwright/
+playwright-report/
+test-results/
+ms-playwright/
+.browser-profile/
+user-data-dir/
 *.har
+trace.zip
+videos/
 
 # Python
 __pycache__/

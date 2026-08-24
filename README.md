@@ -95,6 +95,12 @@ The same code runs unmodified against a hosted aggregator, a first-party
 provider endpoint, or a local vLLM deployment. Copy `.env.example` to `.env`
 and fill in the values.
 
+Settings resolve in three layers, lowest precedence first: `config.yaml` for
+the checked-in defaults, `.env` for machine-local overrides and every secret,
+then command-line flags. `.env` is gitignored; an API key is never read from
+`config.yaml`. `.env.example` lists every variable the agent reads, with names
+and defaults but no values.
+
 ## Development
 
 A `uv`-managed `.venv` is the development environment; a system or user Python
