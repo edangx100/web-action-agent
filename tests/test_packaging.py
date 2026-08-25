@@ -63,6 +63,18 @@ def test_pip_install_from_requirements_provides_both_entry_points(tmp_path):
     assert_ok(install, "pip install -r requirements.txt")
 
     assert_ok(run([(bin_dir / "waa").as_posix(), "--help"]), "waa --help")
+    # The committed defaults are a data file inside the package, so an install
+    # that dropped it would still import cleanly and only fail on first use.
+    assert_ok(
+        run(
+            [
+                python.as_posix(),
+                "-c",
+                "from web_action_agent.config import load_config; load_config()",
+            ]
+        ),
+        "load_config() from an installed wheel",
+    )
     assert_ok(
         run([python.as_posix(), "-m", "web_action_agent", "--help"]),
         "python -m web_action_agent --help",

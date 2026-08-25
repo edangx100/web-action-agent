@@ -1,0 +1,83 @@
+# Committed defaults for every tunable the agent has.
+#
+# Configuration resolves in three layers, lowest precedence first:
+#
+#     config.yaml  ->  .env / environment  ->  command-line flags
+#
+# This file is the bottom layer: the project's declared defaults, the same for
+# everyone who checks the repository out. Machine-local changes belong in .env
+# (which is git-ignored), and per-run changes belong on the command line.
+#
+# Every setting here can also be set as WAA_<NAME_IN_CAPITALS> in .env, or as
+# --name-with-hyphens on the command line. See .env.example for the full list.
+#
+# Secrets are not settings and never appear here: no API key is read from this
+# file, and writing one in would be rejected as an unknown key. Keys live in
+# .env alone.
+#
+# An unrecognised key here is an error rather than a silent default, so a
+# mistyped setting stops the run instead of quietly changing nothing.
+
+# --- Agent loop --------------------------------------------------------------
+
+# Hard cap on steps in one run. The loop's guarantee that it terminates.
+max_steps: 25
+
+# How many times one step may be re-planned after the validator rejects the
+# action, before the step is recorded as failed.
+retry_budget: 2
+
+# Screenshots cost tokens, so they reach the planner only when the DOM signal
+# looks too weak to act on. These two thresholds are that judgement: too few
+# interactive elements extracted from the page, or repeated planner failures on
+# DOM-only input.
+screenshot_min_elements: 5
+screenshot_max_dom_failures: 2
+
+# Truncation budget, in tokens, for the distilled page-text extract that
+# accompanies every observation.
+text_token_budget: 1500
+
+# --- Browser -----------------------------------------------------------------
+
+# Fixed viewport. Element extraction is viewport-only and the annotated
+# screenshot is numbered to match, so changing this changes what the agent can
+# see in one observation, not merely how the page is drawn.
+viewport_width: 1280
+viewport_height: 800
+
+# Politeness floor: minimum seconds between navigations to the same domain.
+domain_delay_s: 1.0
+
+# Domains the navigation allowlist accepts in addition to the start URL's own
+# registrable domain, which is always allowed and never needs listing. In .env
+# the same setting is one comma-separated string.
+allowlist_extra: []
+
+# --- Timeouts, in seconds ----------------------------------------------------
+#
+# Each expiry is reported as a categorized failure with its reason, never an
+# exception that ends a run without a verdict.
+
+action_timeout_s: 30.0    # one browser action
+llm_timeout_s: 90.0       # one model call
+run_timeout_s: 300.0      # one whole run, wall clock
+
+# --- Skill library -----------------------------------------------------------
+
+# Skills whose success rate falls below this are retired automatically; this is
+# how the library sheds skills that site drift has broken.
+skill_retirement_rate: 0.70
+
+# Recorded uses required before retirement can trigger, so that one unlucky
+# replay cannot retire a skill that works.
+skill_retirement_min_sample: 5
+
+# --- Evaluation harness ------------------------------------------------------
+
+# Benchmark tasks run in parallel.
+workers: 4
+
+# Ceilings for one evaluation sweep. Whichever is reached first stops the sweep.
+budget_usd: 15.0
+budget_hours: 6.0
