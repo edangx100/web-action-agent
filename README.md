@@ -95,6 +95,13 @@ The same code runs unmodified against a hosted aggregator, a first-party
 provider endpoint, or a local vLLM deployment. Copy `.env.example` to `.env`
 and fill in the values.
 
+Endpoints are described in `src/web_action_agent/profiles.yaml` as named
+*profiles*: base URL, the variable holding the key, the text model, and the
+vision-language model used when an observation carries a screenshot. Three ship
+— `openrouter`, `nvidia`, and `local` — and one is selected per run with
+`--profile`. Where an aggregator routes one model to several hosts, the profile
+pins the host, so a benchmark number can be reproduced later.
+
 Settings resolve in three layers, lowest precedence first: `config.yaml` for
 the checked-in defaults, `.env` for machine-local overrides and every secret,
 then command-line flags. `.env` is gitignored; an API key is never read from

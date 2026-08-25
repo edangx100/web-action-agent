@@ -110,6 +110,33 @@ class Config(BaseModel):
         frozen=True,
     )
 
+    # --- Model endpoint -----------------------------------------------------
+    # Which named endpoint the run's model calls go to. The endpoints themselves
+    # are described in `profiles.yaml`, not here: this layer picks one and, at
+    # most, adjusts two of its fields for a single run.
+    profile: str = Field(
+        default="openrouter",
+        min_length=1,
+        description="Name of the endpoint profile in profiles.yaml, e.g. openrouter.",
+    )
+    base_url: str | None = Field(
+        default=None,
+        description=(
+            "Overrides the selected profile's base URL — for a self-hosted "
+            "server on another host. None leaves the profile's own value."
+        ),
+    )
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Overrides the selected profile's text model, for trying one model "
+            "without editing profiles.yaml. None leaves the profile's own value."
+        ),
+    )
+    # An API key is deliberately not a field here. Adding one would make it
+    # writable in the committed config.yaml; keys are read from the environment
+    # by the model client alone.
+
     # --- Agent loop ---------------------------------------------------------
     max_steps: int = Field(
         default=25,

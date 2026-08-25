@@ -18,6 +18,19 @@
 # An unrecognised key here is an error rather than a silent default, so a
 # mistyped setting stops the run instead of quietly changing nothing.
 
+# --- Model endpoint ----------------------------------------------------------
+
+# Which named endpoint every model call goes to. The endpoints themselves —
+# base URLs, model names, which variable holds each key — are described in
+# profiles.yaml. This setting picks one of them: openrouter, nvidia, or local.
+profile: openrouter
+
+# Ad-hoc overrides of the selected profile, for cases profiles.yaml cannot
+# anticipate: a self-hosted server on another host, or one run against a
+# different model. Left empty, the profile's own values stand.
+base_url:
+model:
+
 # --- Agent loop --------------------------------------------------------------
 
 # Hard cap on steps in one run. The loop's guarantee that it terminates.

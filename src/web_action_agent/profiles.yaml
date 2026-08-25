@@ -1,0 +1,83 @@
+# Named model endpoints — the only place an endpoint is described.
+#
+# The agent never contains a base URL, a model name, or an API key. It asks for
+# a profile by name (--profile openrouter) and gets back everything needed to
+# talk to that endpoint. Running the same agent against a hosted aggregator, a
+# first-party endpoint, or a laptop-local server is therefore a flag, not a
+# code change — which is the claim this project has to be able to demonstrate.
+#
+# Each profile has:
+#
+#   base_url          OpenAI-compatible API root.
+#   api_key_env       Name of the environment variable holding the key. The key
+#                     itself is never written here — this file is committed.
+#   api_key_required  False only where the server genuinely needs no key.
+#   text              The route used when the planner sends DOM text alone.
+#   vision            The route used when a screenshot is attached. Omitted
+#                     (null) where the endpoint serves no vision model, which
+#                     is what makes the screenshot channel unavailable rather
+#                     than silently dropped.
+#
+# A route is a model plus two facts about how that model must be called:
+#
+#   model                  The model identifier the endpoint expects.
+#   provider_order         Aggregators route one model to several hosts, which
+#                          do not behave identically. Pinning the host is what
+#                          makes a benchmark number reproducible three weeks
+#                          later. Empty where the endpoint has one host anyway.
+#   supports_json_schema   Whether the route honours schema-constrained
+#                          decoding. Where it does not, the agent still asks
+#                          the model for JSON in the prompt and the validator's
+#                          schema check plus bounded retry is the safety net.
+#
+# Model choice: the planner is the Nemotron 3 Nano family throughout — a small
+# open-weight model, so the local profile serves the same weights as the hosted
+# ones. Its vision-language sibling handles observations carrying a screenshot.
+
+openrouter:
+  # Primary development path: one key, many models, easy comparison sweeps.
+  base_url: https://openrouter.ai/api/v1
+  api_key_env: WAA_OPENROUTER_API_KEY
+  api_key_required: true
+  text:
+    model: nvidia/nemotron-3-nano-30b-a3b
+    # Of the hosts serving this model, Novita is the one advertising
+    # response_format support, so pinning it buys reproducibility and
+    # schema-constrained decoding in the same stroke.
+    provider_order: [Novita]
+    supports_json_schema: true
+  vision:
+    # The vision sibling is routed only as a free endpoint here, and that
+    # endpoint does not advertise response_format — hence the flag below, and
+    # hence the validator's retry loop mattering most on screenshot steps.
+    model: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+    provider_order: [Nvidia]
+    supports_json_schema: false
+
+nvidia:
+  # First-party fallback: fewer models, but one vendor, no routing layer, and
+  # therefore nothing to pin. Where the aggregator misbehaves, this arbitrates.
+  base_url: https://integrate.api.nvidia.com/v1
+  api_key_env: WAA_NVIDIA_API_KEY
+  api_key_required: true
+  text:
+    model: nvidia/nemotron-3-nano-30b-a3b
+    provider_order: []
+    supports_json_schema: true
+  vision:
+    model: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
+    provider_order: []
+    supports_json_schema: true
+
+local:
+  # Self-hosted vLLM. A server usually serves exactly one model, so there is no
+  # vision route: with this profile the screenshot channel reports itself
+  # unavailable instead of quietly sending images the model cannot read.
+  base_url: http://127.0.0.1:8000/v1
+  api_key_env: WAA_LOCAL_API_KEY
+  api_key_required: false
+  text:
+    model: nvidia/nemotron-3-nano-30b-a3b
+    provider_order: []
+    supports_json_schema: true
+  vision: null
