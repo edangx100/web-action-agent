@@ -170,6 +170,14 @@ drifting apart. The test job asserts up front that its selection reaches no
 - Configurable hard step cap per run
 - No login-gated, transactional, or destructive interactions
 
+Each run may visit the *registrable domain* of its start URL — `nlb.gov.sg` for
+a run starting on `catalogue.nlb.gov.sg`, never the whole of `gov.sg` — plus
+any domains in `allowlist_extra` and any the task itself declares. The boundary
+is computed from a packaged copy of the Public Suffix List, so a lookalike, or
+a neighbour registered under the same multi-part ending, is refused. The list
+is fixed before the first step; going anywhere else is a correctable error
+handed back to the planner, not a crash.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

@@ -39,6 +39,8 @@ pillow==12.3.0
     # via web-action-agent
 playwright==1.62.0
     # via web-action-agent
+publicsuffixlist==1.0.2.20260821
+    # via web-action-agent
 pydantic==2.13.4
     # via
     #   openai

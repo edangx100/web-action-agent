@@ -446,6 +446,15 @@ wheels = [
 ]
 
 [[package]]
+name = "publicsuffixlist"
+version = "1.0.2.20260821"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/61/b4/50577ffe90de235263342c2b07993681b5395818a30a99fcede54069fe93/publicsuffixlist-1.0.2.20260821.tar.gz", hash = "sha256:ba6454a4959216e2d080fd2ab2f498d96916c9072cc6ba735f7d16df6aaefbe1", size = 108942, upload-time = "2026-08-21T03:56:31.186Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/de/fd/224f6e4d143decf2f4d01200eb728e167b1fb7075e25029563bbe52374dd/publicsuffixlist-1.0.2.20260821-py2.py3-none-any.whl", hash = "sha256:1242f7d2923d44e21eb8341fe1368645e331bda4b606403cf319dddace036504", size = 108704, upload-time = "2026-08-21T03:56:30.047Z" },
+]
+
+[[package]]
 name = "pydantic"
 version = "2.13.4"
 source = { registry = "https://pypi.org/simple" }
@@ -776,6 +785,7 @@ dependencies = [
     { name = "openai" },
     { name = "pillow" },
     { name = "playwright" },
+    { name = "publicsuffixlist" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "typer" },
@@ -793,6 +803,7 @@ requires-dist = [
     { name = "openai", specifier = ">=1.40" },
     { name = "pillow", specifier = ">=10.4" },
     { name = "playwright", specifier = ">=1.47" },
+    { name = "publicsuffixlist", specifier = ">=1.0" },
     { name = "pydantic", specifier = ">=2.8" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "typer", specifier = ">=0.12" },
