@@ -19,9 +19,14 @@ Two properties of that arrangement are worth stating, because they are what the
 design buys:
 
 * **Secrets cannot leak through the committed file.** No field below holds a
-  key, so an API key written into ``config.yaml`` is an *unknown key*, and
-  unknown keys are an error (see :func:`load_config`). The failure is loud and
-  immediate rather than a secret quietly riding into a public commit.
+  key, and a setting whose *name* says it holds one is rejected by name (see
+  :func:`is_secret_name`) with a message that says where the value belongs
+  instead. The failure is loud and immediate rather than a secret quietly
+  riding into a public commit — which no later deletion undoes.
+* **Secrets that are read are remembered, so they can be scrubbed.** Every key
+  this module resolves out of the environment is registered with
+  :func:`register_secret`, and :func:`redact` removes registered values from
+  any text on its way to a terminal, a log, or a run's trace.
 * **A typo is an error, not a silent default.** Configuration that ignores what
   it does not recognise is the worst kind: the run proceeds, at a value nobody
   chose. ``max_step: 40`` raises here instead.
@@ -54,6 +59,32 @@ DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
 #: Where :func:`load_config` looks for the local secrets file when the caller
 #: names none: the working directory, which for this project is the checkout.
 DEFAULT_DOTENV_PATH = Path(".env")
+
+#: A variable whose name ends in one of these holds a secret. The test is on
+#: the *name*, not the value: providers spell keys differently, change the
+#: spelling, and some issue plain hex, so no pattern recognises a key by
+#: looking at it. A name, by convention, always says.
+SECRET_NAME_SUFFIXES = ("_API_KEY", "_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_PASSWD")
+
+#: Names that are a secret in their own right, with no prefix to end in.
+SECRET_NAMES = frozenset({"KEY", "API_KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD"})
+
+#: Values shorter than this are never treated as secrets to redact. A real key
+#: is long; a short one is far more likely to be a flag like ``1`` or ``true``,
+#: and redacting *that* would blank out unrelated text wherever it appeared.
+MIN_SECRET_LENGTH = 8
+
+#: What :func:`redact` leaves in place of a secret.
+REDACTED = "[redacted]"
+
+#: Every secret value this process has resolved, so that :func:`redact` works
+#: at call sites that have no environment to hand — an exception constructor
+#: deep in the model client, say. Module-level mutable state is the price of
+#: that: the alternative is threading an environment through every path that
+#: might one day format a string into a log, and one path that forgets is the
+#: whole guarantee gone. Nothing is ever removed except by :func:`forget_secrets`,
+#: which exists for tests.
+_registered_secrets: set[str] = set()
 
 
 class ConfigError(Exception):
@@ -249,11 +280,49 @@ def flag_for(field: str) -> str:
     return "--" + field.replace("_", "-")
 
 
+def _clean_value(value: str) -> str:
+    """Reduce the right-hand side of a ``.env`` line to the value it means.
+
+    Two conventions have to be honoured, and one of them is why this exists:
+
+    * **Quotes are wrapping, not content.** ``NAME="a b"`` means ``a b``.
+    * **A trailing ``#`` comment is a comment.** The committed ``.env.example``
+      annotates its variables that way, and the README says to copy that file
+      to ``.env`` — so without this, following the documented setup assigns
+      every variable the text of its own comment. The consequences are not
+      symmetric: a numeric setting then fails loudly at startup, but an unset
+      key silently becomes a comment string, and the endpoint that needs no key
+      is handed one anyway.
+
+    A ``#`` only opens a comment at the start of the value or after
+    whitespace, so a key containing one — ``sk-a#b`` — survives intact. Where
+    a value genuinely needs " #" in it, quoting says so.
+
+    Args:
+        value: The already-stripped text to the right of the first ``=``.
+
+    Returns:
+        str: The value, unquoted and uncommented.
+    """
+    if value.startswith(('"', "'")):
+        quote = value[0]
+        end = value.find(quote, 1)
+        if end != -1:
+            return value[1:end]
+        return value  # Unterminated: take it literally rather than guess.
+
+    head, hash_sign, _ = value.partition("#")
+    if hash_sign and (not head or head[-1].isspace()):
+        return head.rstrip()
+    return value
+
+
 def read_dotenv(path: Path) -> dict[str, str]:
     """Parse a ``.env`` file into a mapping, without touching ``os.environ``.
 
     Deliberately a small parser rather than a dependency: the file format this
-    project uses is ``NAME=value`` lines, blank lines, and ``#`` comments. An
+    project uses is ``NAME=value`` lines, blank lines, and ``#`` comments —
+    whole-line or trailing, the latter handled by :func:`_clean_value`. An
     optional ``export`` prefix and surrounding quotes are tolerated because
     editors and shells add them; anything else is rejected rather than guessed
     at, since a silently skipped line here means a silently missing API key.
@@ -280,13 +349,130 @@ def read_dotenv(path: Path) -> dict[str, str]:
         name, separator, value = line.partition("=")
         if not separator or not name.strip():
             raise ConfigError(f"{path}:{number}: expected NAME=value, got {raw_line!r}")
-        value = value.strip()
-        # Strip one matched pair of quotes, so NAME="a b" and NAME='a b' both
-        # yield `a b` rather than a value with quote characters in it.
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-            value = value[1:-1]
-        values[name.strip()] = value
+        values[name.strip()] = _clean_value(value.strip())
     return values
+
+
+def is_secret_name(name: str) -> bool:
+    """Report whether a variable or setting name is one that holds a secret.
+
+    Args:
+        name: A variable name (``WAA_OPENROUTER_API_KEY``) or a setting name
+            from a configuration file (``api_key``). Case is ignored, so the
+            same rule serves both conventions.
+
+    Returns:
+        bool: True if the name declares itself a secret.
+    """
+    upper = name.strip().upper()
+    return upper in SECRET_NAMES or upper.endswith(SECRET_NAME_SUFFIXES)
+
+
+def register_secret(value: str) -> None:
+    """Record a resolved secret so it can be redacted anywhere from now on.
+
+    Called wherever a key is read out of the environment. Values too short to
+    be a plausible key are ignored, for the reason given on
+    :data:`MIN_SECRET_LENGTH`.
+
+    Args:
+        value: The secret value. Blank and short values are dropped.
+    """
+    cleaned = value.strip()
+    if len(cleaned) >= MIN_SECRET_LENGTH:
+        _registered_secrets.add(cleaned)
+
+
+def forget_secrets() -> None:
+    """Empty the registry of resolved secrets.
+
+    For tests, which would otherwise leak a fake key from one test into the
+    redaction another test is asserting on.
+    """
+    _registered_secrets.clear()
+
+
+def secret_values(env: Mapping[str, str]) -> frozenset[str]:
+    """Collect the secret values in an environment mapping.
+
+    Args:
+        env: Variable names mapped to values — ``os.environ``, a parsed
+            ``.env``, or the two merged.
+
+    Returns:
+        frozenset[str]: The values of every secret-named variable that is long
+        enough to be a plausible key.
+    """
+    return frozenset(
+        value.strip()
+        for name, value in env.items()
+        if is_secret_name(name) and len(value.strip()) >= MIN_SECRET_LENGTH
+    )
+
+
+def redact(text: str, *, env: Mapping[str, str] | None = None) -> str:
+    """Replace every known secret in ``text`` with :data:`REDACTED`.
+
+    Everything this project writes down that could have a key in it — an error
+    message quoting a provider's response, a startup report, a trace record —
+    goes through here first. It redacts both the secrets already resolved (see
+    :func:`register_secret`) and those visible in ``env``, so a key is covered
+    whether or not the code path that formatted it ever read one.
+
+    Longest values are replaced first, so a key that happens to contain a
+    shorter one cannot be left half-substituted.
+
+    Args:
+        text: The text about to be shown, logged, or written.
+        env: An environment to scan in addition to the registry. Defaults to
+            ``os.environ``.
+
+    Returns:
+        str: The text with every known secret removed.
+    """
+    values = set(_registered_secrets) | secret_values(env if env is not None else os.environ)
+    for value in sorted(values, key=len, reverse=True):
+        text = text.replace(value, REDACTED)
+    return text
+
+
+def resolve_env(
+    *,
+    dotenv_path: Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Merge the local ``.env`` under the process environment, once.
+
+    This is the environment every part of the project reads keys from, and the
+    only one: a key reaches the agent through ``.env`` or through an exported
+    variable, never through a committed file. Reading it here rather than in
+    each component is what keeps a key written into ``.env`` from working for
+    configuration but silently not for the model client.
+
+    An exported variable beats the same name in the file. Both are
+    machine-local, and the one typed for a single invocation is the more
+    deliberate of the two.
+
+    Secrets found on the way are registered for redaction, so a key never has
+    to be seen a second time to be scrubbed from a message.
+
+    Args:
+        dotenv_path: The local file. Defaults to ``.env`` in the working
+            directory; a missing file is not an error.
+        env: The process environment. Defaults to ``os.environ``.
+
+    Returns:
+        dict[str, str]: The merged environment.
+
+    Raises:
+        ConfigError: If the ``.env`` file has a line that is not an assignment.
+    """
+    dotenv = read_dotenv(dotenv_path if dotenv_path is not None else DEFAULT_DOTENV_PATH)
+    merged = {**dotenv, **(env if env is not None else os.environ)}
+    for name, value in merged.items():
+        if is_secret_name(name):
+            register_secret(value)
+    return merged
 
 
 def _file_layer(path: Path) -> dict[str, Any]:
@@ -302,9 +488,10 @@ def _file_layer(path: Path) -> dict[str, Any]:
 
     Raises:
         ConfigError: If the file is not valid YAML, does not contain a mapping,
-            or names a key that is not a :class:`Config` field. That last case
-            is checked here rather than left to the schema so the message can
-            name the file and the offending key.
+            names a setting that holds a secret, or names a key that is not a
+            :class:`Config` field. The last two are checked here rather than
+            left to the schema so the message can name the file and the
+            offending key.
     """
     if not path.exists():
         return {}
@@ -318,6 +505,19 @@ def _file_layer(path: Path) -> dict[str, Any]:
         return {}
     if not isinstance(parsed, dict):
         raise ConfigError(f"{path}: expected a mapping of settings, got {type(parsed).__name__}")
+
+    # Checked ahead of the unknown-key rule so that the one mistake with a
+    # lasting consequence gets the message that says what to do about it. This
+    # file is committed; a key written here is a key on its way to a public
+    # history, where deleting it later does not unpublish it.
+    secrets = sorted(name for name in parsed if is_secret_name(str(name)))
+    if secrets:
+        raise ConfigError(
+            f"{path}: {', '.join(secrets)} names a secret, and secrets are never read "
+            f"from this file — it is committed. Put the value in {DEFAULT_DOTENV_PATH}, "
+            f"which is git-ignored, and remove it from here. If the key has already "
+            f"been committed, rotate it."
+        )
 
     unknown = sorted(set(parsed) - set(Config.model_fields))
     if unknown:
@@ -415,8 +615,7 @@ def load_config(
             the resolved values fail validation.
     """
     file_values = _file_layer(config_path if config_path is not None else DEFAULT_CONFIG_PATH)
-    dotenv_values = read_dotenv(dotenv_path if dotenv_path is not None else DEFAULT_DOTENV_PATH)
-    env_values = _env_layer({**dotenv_values, **(env if env is not None else os.environ)})
+    env_values = _env_layer(resolve_env(dotenv_path=dotenv_path, env=env))
     cli_values = _cli_layer(cli or {})
 
     merged = {**file_values, **env_values, **cli_values}

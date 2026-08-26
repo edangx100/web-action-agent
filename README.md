@@ -55,7 +55,8 @@ annotated screenshots, an action log, cost accounting, and a verdict.
 
 - Python 3.11+
 - Playwright with Chromium
-- An OpenAI-compatible LLM endpoint (base URL, API key, model name)
+- To run a task: an OpenAI-compatible LLM endpoint (base URL, API key, model
+  name). Installing and testing needs neither an endpoint nor an account.
 
 ## Install
 
@@ -105,8 +106,33 @@ pins the host, so a benchmark number can be reproduced later.
 Settings resolve in three layers, lowest precedence first: `config.yaml` for
 the checked-in defaults, `.env` for machine-local overrides and every secret,
 then command-line flags. `.env` is gitignored; an API key is never read from
-`config.yaml`. `.env.example` lists every variable the agent reads, with names
-and defaults but no values.
+`config.yaml`, and a setting there whose name says it holds one is rejected by
+name with a message pointing at `.env`. `.env.example` lists every variable the
+agent reads, with names and defaults but no values.
+
+### What your keys make available
+
+No account is needed to read, install, or test this project: the offline suite
+runs on a local static site with no network and no key. Only running a task
+needs an endpoint. Every command prints, before it does anything, what the keys
+it found actually enable:
+
+```
+capabilities:
+  [ok] agent    profile 'openrouter' -> nvidia/nemotron-3-nano-30b-a3b
+  [ok] vision   screenshots go to nvidia/nemotron-3-nano-omni-30b-a3b
+  [--] judge    no judge endpoint: set WAA_JUDGE_PROFILE, ...
+```
+
+Nothing there is fatal. Running tasks needs the agent endpoint; reproducing the
+published evaluation additionally needs a judge, which is deliberately a
+different model family from the planner. A missing judge is a line in the
+report rather than an error, so the failure it prevents — a benchmark that
+quietly skipped grading — cannot happen unnoticed.
+
+The report names variables, never values. Keys are read from the environment
+and `.env` alone, and every message the agent prints, logs, or writes into a
+run's trace is scrubbed of them first.
 
 ## Development
 

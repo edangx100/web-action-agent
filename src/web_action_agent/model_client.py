@@ -30,6 +30,15 @@ gets the schema in the prompt, and unparseable output raises
 :class:`ModelResponseError` for the caller's retry loop to catch. Malformed
 JSON is a normal event to be retried, never a crash.
 
+**Keys, and where they are not.** A profile names the *variable* that holds
+its key, never the key. The value is read from the environment — ``.env``
+merged under the exported variables — at construction, so a missing key is
+"you have not set one" before the browser opens rather than an HTTP 401 in the
+middle of step seven. Once read, a key lives in the underlying HTTP client and
+nowhere else: the repr shows the profile and model, and every error this
+module raises is scrubbed of key values on its way out, because those errors
+quote provider responses into logs and committed traces.
+
 **What is deliberately not here yet.** Rate-limit backoff and per-call dollar
 costs are separate pieces of work that plug into the seams this module already
 provides: ``max_retries=0`` on the underlying client leaves one owner for retry
@@ -41,7 +50,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -52,7 +60,7 @@ import yaml
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from web_action_agent.config import Config
+from web_action_agent.config import Config, redact, register_secret, resolve_env
 
 #: The committed endpoint descriptions. Packaged next to the module so the file
 #: is found identically from a checkout and from an installed wheel.
@@ -79,7 +87,22 @@ class ModelClientError(Exception):
     One exception type per component keeps a caller's error handling honest —
     "the model layer failed" is the distinction that matters to the agent loop,
     not which library raised underneath.
+
+    Every message is redacted on the way in. This is the module that holds the
+    keys, and it is also the module whose errors quote provider responses back
+    verbatim — a rate-limit body, an auth failure, an SDK error that echoes the
+    request it made. Scrubbing in the base constructor means the guarantee
+    holds for errors this module has not grown yet, rather than depending on
+    each new ``raise`` site remembering.
     """
+
+    def __init__(self, message: str) -> None:
+        """Build the error with any key value removed from its message.
+
+        Args:
+            message: The diagnostic, which may quote a provider's response.
+        """
+        super().__init__(redact(message))
 
 
 class ProfileError(ModelClientError):
@@ -328,6 +351,9 @@ def resolve_api_key(profile: Profile, env: Mapping[str, str]) -> str:
     for variable in (API_KEY_OVERRIDE_ENV, profile.api_key_env):
         value = (env.get(variable) or "").strip()
         if value:
+            # Remembered so that any later message quoting a provider response
+            # has this value scrubbed out of it, wherever it is formatted.
+            register_secret(value)
             return value
 
     if not profile.api_key_required:
@@ -524,7 +550,8 @@ class ModelClient:
                 from ``env``.
             timeout_s: Ceiling on one call. Expiry is a categorized failure the
                 run reports, not an exception that ends it without a verdict.
-            env: Environment to read the key from. Defaults to the real one.
+            env: Environment to read the key from. Defaults to ``.env``
+                merged under the process environment.
             transport: An object shaped like ``openai.OpenAI``. Injected by
                 tests so the whole request-building path can be asserted on
                 without a network, a key, or a bill.
@@ -534,8 +561,10 @@ class ModelClient:
         """
         self.profile = profile
         self.timeout_s = timeout_s
+        if api_key:
+            register_secret(api_key)
         self._transport = transport or OpenAI(
-            api_key=api_key or resolve_api_key(profile, env if env is not None else os.environ),
+            api_key=api_key or resolve_api_key(profile, env if env is not None else resolve_env()),
             base_url=profile.base_url,
             timeout=timeout_s,
             # Retries are switched off here on purpose. Bounded backoff for
@@ -561,7 +590,8 @@ class ModelClient:
 
         Args:
             config: The resolved run configuration.
-            env: Environment to read the key from. Defaults to the real one.
+            env: Environment to read the key from. Defaults to ``.env``
+                merged under the process environment.
             profiles_path: Profiles file. Defaults to the packaged one.
             transport: Injected client, as in :meth:`__init__`.
 

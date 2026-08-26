@@ -176,8 +176,11 @@ def test_unknown_file_key_raises(tmp_path: Path) -> None:
 def test_api_key_in_committed_file_raises(tmp_path: Path) -> None:
     """A secret written into the committed file is rejected, not read.
 
-    No field of the schema holds a key, so this is the unknown-key rule doing
-    the work — which is precisely why that rule refuses rather than ignores.
+    No field of the schema holds a key, so the unknown-key rule would catch
+    this on its own; the loader recognises the *name* first so the message can
+    say where the value belongs instead. What that message says is asserted in
+    ``test_secrets.py``; what matters here is that the loader refuses rather
+    than ignores.
     """
     with pytest.raises(ConfigError):
         load(tmp_path, yaml_text="openrouter_api_key: sk-not-a-real-key\n")
