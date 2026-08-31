@@ -89,6 +89,23 @@ waa run "Search Hacker News for 'Rust async' and open the top result"
 | `waa skills list \| show \| retire` | Inspect and curate the skill library |
 | `waa judge <runs-dir>` | Produce verdicts and the agreement report |
 
+Add `--help` to any of them for its flags. Every run starts from an explicit
+URL — `--start-url`, or the `start_url` default — because the agent never
+begins on a blank page and guesses. `--headed` shows the browser window; it is
+off by default so runs work over SSH and in CI.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | It worked |
+| `1` | The command ran and the work did not succeed — a task the agent could not complete |
+| `2` | The command could not be run at all — an unknown flag, a bad setting |
+
+The difference between `1` and `2` is there to be used: a benchmark script
+records a failed task and carries on, but stops on `2`, since a mistyped flag
+of its own would be repeated by every remaining invocation.
+
 ## Configuration
 
 The model endpoint is pure configuration — base URL, API key, and model name.

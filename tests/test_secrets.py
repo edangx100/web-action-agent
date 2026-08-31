@@ -430,7 +430,10 @@ def test_help_prints_with_no_keys_and_no_configuration(
     assert cli.main() == 0
 
     printed = capsys.readouterr().out
-    assert "usage: waa" in printed
+    # Case-folded because the wording of the usage line belongs to the argument
+    # parser, not to this project. What matters here is that help was produced
+    # at all with no key and no settings file in sight.
+    assert "usage: waa" in printed.lower()
     for command in cli.COMMANDS:
         assert command in printed
 

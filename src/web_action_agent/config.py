@@ -198,7 +198,24 @@ class Config(BaseModel):
         description="Truncation budget for the distilled page-text extract.",
     )
 
+    # --- Run ----------------------------------------------------------------
+    start_url: str = Field(
+        default="https://en.wikipedia.org/",
+        min_length=1,
+        description=(
+            "Page an ad-hoc run opens on. The agent never starts on a blank "
+            "page and guesses an address; benchmark tasks name their own."
+        ),
+    )
+
     # --- Browser ------------------------------------------------------------
+    headed: bool = Field(
+        default=False,
+        description=(
+            "Show the browser window. Off by default so that a run works over "
+            "SSH and in CI, where there is no screen to draw on."
+        ),
+    )
     viewport_width: int = Field(
         default=1280,
         gt=0,

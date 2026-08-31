@@ -31,6 +31,19 @@ profile: openrouter
 base_url:
 model:
 
+# --- Run ---------------------------------------------------------------------
+
+# The page an ad-hoc `waa run "<task>"` opens on, when --start-url is not
+# given. The agent never starts on a blank page and guesses an address, so
+# there is always a default here; benchmark tasks name their own start URL and
+# ignore this one.
+#
+# Wikipedia is the default because it is public, read-only, needs no login,
+# and is a reasonable place to begin almost any "find out X" task. The start
+# URL also fixes which sites the run may visit, so this is a safety-relevant
+# default, not just a convenience.
+start_url: https://en.wikipedia.org/
+
 # --- Agent loop --------------------------------------------------------------
 
 # Hard cap on steps in one run. The loop's guarantee that it terminates.
@@ -52,6 +65,11 @@ screenshot_max_dom_failures: 2
 text_token_budget: 1500
 
 # --- Browser -----------------------------------------------------------------
+
+# Show the browser window while the agent drives it. Off by default: a run has
+# to work over SSH and in CI, where there is no screen to draw on. `--headed`
+# turns it on for one run, which is what the demo recording uses.
+headed: false
 
 # Fixed viewport. Element extraction is viewport-only and the annotated
 # screenshot is numbered to match, so changing this changes what the agent can
