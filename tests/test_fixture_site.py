@@ -19,6 +19,7 @@ from fixtures.site_server import SITE_ROOT
 PAGES = [
     ("index.html", 'id="home-heading"'),
     ("search.html", 'id="search-form"'),
+    ("browse.html", 'id="browse-list"'),
     ("results.html", 'id="results-list"'),
     ("form-step-1.html", 'id="applicant-name"'),
     ("form-step-2.html", 'id="applicant-email"'),

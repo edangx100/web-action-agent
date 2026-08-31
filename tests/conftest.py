@@ -9,6 +9,17 @@ from collections.abc import Iterator
 import pytest
 from fixtures.site_server import StaticSite
 from marker_policy import policy_violations, violation_report
+from playwright.sync_api import Browser, Page, sync_playwright
+
+VIEWPORT = {"width": 1280, "height": 800}
+"""dict[str, int]: The viewport every browser test runs at.
+
+Mirrors the committed default in ``config.yaml``, and deliberately fixed rather
+than read from it: element extraction is viewport-only and the annotated
+screenshot is numbered to match, so a test whose viewport came from local
+configuration would be testing a different page than continuous integration
+was.
+"""
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -51,3 +62,45 @@ def fixture_site() -> Iterator[StaticSite]:
     """
     with StaticSite() as site:
         yield site
+
+
+@pytest.fixture(scope="session")
+def browser() -> Iterator[Browser]:
+    """Run one headless Chromium for the whole test session.
+
+    Launching a browser costs a second or so, which is worth paying once and
+    not once per test. Nothing leaks between tests as a result, because a test
+    never touches this directly -- it asks for ``page``, which brings its own
+    context.
+
+    Yields:
+        Browser: The running browser.
+    """
+    with sync_playwright() as playwright:
+        instance = playwright.chromium.launch()
+        try:
+            yield instance
+        finally:
+            instance.close()
+
+
+@pytest.fixture
+def page(browser: Browser) -> Iterator[Page]:
+    """Open a fresh page, in a fresh browser context, for one test.
+
+    The context is the isolation boundary: its own cookies, its own storage,
+    its own history. One per test is the same rule the agent follows for one
+    per task, and for the same reason -- what an earlier run left behind must
+    not decide what a later one sees.
+
+    Args:
+        browser: The session's browser.
+
+    Yields:
+        Page: A blank page sized to :data:`VIEWPORT`.
+    """
+    context = browser.new_context(viewport=VIEWPORT)
+    try:
+        yield context.new_page()
+    finally:
+        context.close()

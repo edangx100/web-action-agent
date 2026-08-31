@@ -130,3 +130,42 @@ dl.summary dd { margin: 2px 0 0; }
 .modal h2 { margin-top: 0; }
 
 .modal .actions { display: flex; gap: 12px; }
+
+/* A skip link, positioned off the reading order and sized down to a single
+   pixel until it is focused. Nothing on screen, and nothing an agent should be
+   offered — which is exactly why the browse page carries one. */
+.skip-link {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.filter-actions { align-items: center; display: flex; gap: 12px; }
+
+/* A control that is a button in every way a reader can tell, and a <span> in
+   the markup. Its role attribute is the only thing that says so. */
+.pseudo-button {
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 15px;
+  margin-top: 18px;
+  padding: 9px 18px;
+}
+
+nav.pagination {
+  align-items: center;
+  border-top: 1px solid var(--rule);
+  display: flex;
+  gap: 14px;
+  margin-top: 28px;
+  padding-top: 18px;
+}
+
+nav.pagination a { color: var(--accent); }
+nav.pagination button:disabled { border-color: var(--rule); background: var(--rule); cursor: default; }
+nav.pagination .arrow { font-size: 20px; text-decoration: none; }

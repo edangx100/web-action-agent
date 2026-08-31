@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Browse the catalogue — Northgate Public Library</title>
+  <link rel="stylesheet" href="static/site.css">
+</head>
+<body data-page="browse">
+  <!-- Exercises perception rather than action: the page is deliberately far
+       taller than the 1280x800 viewport, so most of it is off screen at any
+       moment and scrolling changes what the agent can see. It also collects,
+       as ordinary page furniture, the elements that must NOT be offered as
+       things to act on — a visually hidden skip link, a disabled button, a
+       hidden block, an anchor with no href, and a decorative duplicate link
+       marked aria-hidden. Each is a real pattern from real sites, not a
+       contrivance, and each is a filter the extractor has to apply. -->
+  <a class="skip-link" href="#catalogue">Skip to the catalogue</a>
+
+  <header class="site">
+    <div class="wordmark">Northgate Public Library</div>
+    <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="search.html">Search the catalogue</a>
+      <a href="browse.html">Browse the catalogue</a>
+      <a href="form-step-1.html">Join the library</a>
+      <a href="article.html">Reading room news</a>
+      <a href="consent.html">Member notices</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1 id="browse-heading">Browse the catalogue</h1>
+    <p class="lede">Twenty records a page, most recent acquisitions first.</p>
+
+    <form id="browse-filter" action="browse.html" method="get">
+      <label for="shelf">Shelf</label>
+      <select id="shelf" name="shelf">
+        <option value="">All shelves</option>
+        <option value="local-history">Local history</option>
+        <option value="conservation">Conservation</option>
+        <option value="cataloguing">Cataloguing</option>
+        <option value="essays">Essays</option>
+      </select>
+      <div class="filter-actions">
+        <button type="submit" id="apply-filter">Apply</button>
+        <span class="pseudo-button" role="button" tabindex="0" id="save-search">Save this search</span>
+      </div>
+    </form>
+
+    <!-- Shown only when a filter matches nothing. Hidden as the page loads,
+         and so is its button. -->
+    <p id="no-matches" hidden>
+      Nothing is shelved there yet.
+      <button type="button" id="clear-filter">Clear the filter</button>
+    </p>
+
+    <a id="catalogue"></a>
+    <h2>Records 1–20 of 54</h2>
+    <ul class="results" id="browse-list">
+        <li>
+          <a href="results.html?q=the+northgate+almanac" id="browse-item-1">The Northgate Almanac, 1908-1958</a>
+          <div class="tags">Subject tags: local history, archive</div>
+        </li>
+        <li>
+          <a href="results.html?q=reading+rooms+of+the+north" id="browse-item-2">Reading Rooms of the North</a>
+          <div class="tags">Subject tags: architecture, local history</div>
+        </li>
+        <li>
+          <a href="results.html?q=a+short+history+of+the+lending+ticket" id="browse-item-3">A Short History of the Lending Ticket</a>
+          <div class="tags">Subject tags: membership, archive</div>
+        </li>
+        <li>
+          <a href="results.html?q=marginalia" id="browse-item-4">Marginalia: Notes Left in Library Books</a>
+          <div class="tags">Subject tags: essays, archive</div>
+        </li>
+        <li>
+          <a href="results.html?q=the+quiet+hour" id="browse-item-5">The Quiet Hour: Reading in Public</a>
+          <div class="tags">Subject tags: essays, reading room</div>
+        </li>
+        <li>
+          <a href="results.html?q=shelfmarks+and+their+discontents" id="browse-item-6">Shelfmarks and Their Discontents</a>
+          <div class="tags">Subject tags: cataloguing</div>
+        </li>
+        <li>
+          <a href="results.html?q=paper" id="browse-item-7">Paper, Board, Buckram</a>
+          <div class="tags">Subject tags: conservation</div>
+        </li>
+        <li>
+          <a href="results.html?q=the+card+catalogue" id="browse-item-8">The Card Catalogue, Illustrated</a>
+          <div class="tags">Subject tags: cataloguing, archive</div>
+        </li>
+        <li>
+          <a href="results.html?q=borrowing+patterns+of+a+market+town" id="browse-item-9">Borrowing Patterns of a Market Town</a>
+          <div class="tags">Subject tags: statistics, membership</div>
+        </li>
+        <li>
+          <a href="results.html?q=winter+opening" id="browse-item-10">Winter Opening: A Librarian's Diary</a>
+          <div class="tags">Subject tags: essays, reading room</div>
+        </li>
+        <li>
+          <a href="results.html?q=repairing+the+spine" id="browse-item-11">Repairing the Spine</a>
+          <div class="tags">Subject tags: conservation</div>
+        </li>
+        <li>
+          <a href="results.html?q=two+hundred+thousand+volumes" id="browse-item-12">Two Hundred Thousand Volumes</a>
+          <div class="tags">Subject tags: local history</div>
+        </li>
+        <li>
+          <a href="results.html?q=the+reference+desk+at+midnight" id="browse-item-13">The Reference Desk at Midnight</a>
+          <div class="tags">Subject tags: essays</div>
+        </li>
+        <li>
+          <a href="results.html?q=on+privacy+in+the+reading+room" id="browse-item-14">On Privacy in the Reading Room</a>
+          <div class="tags">Subject tags: privacy, reading room</div>
+        </li>
+        <li>
+          <a href="results.html?q=what+the+fines+paid+for" id="browse-item-15">What the Fines Paid For</a>
+          <div class="tags">Subject tags: membership, statistics</div>
+        </li>
+        <li>
+          <a href="results.html?q=the+northgate+map+collection" id="browse-item-16">The Northgate Map Collection</a>
+          <div class="tags">Subject tags: archive, local history</div>
+        </li>
+        <li>
+          <a href="results.html?q=children's+tickets" id="browse-item-17">Children's Tickets: A Century</a>
+          <div class="tags">Subject tags: membership</div>
+        </li>
+        <li>
+          <a href="results.html?q=bindings+of+the+eastern+counties" id="browse-item-18">Bindings of the Eastern Counties</a>
+          <div class="tags">Subject tags: conservation, archive</div>
+        </li>
+        <li>
+          <a href="results.html?q=silence" id="browse-item-19">Silence, and How It Was Kept</a>
+          <div class="tags">Subject tags: essays, reading room</div>
+        </li>
+        <li>
+          <a href="results.html?q=the+last+card+index" id="browse-item-20">The Last Card Index</a>
+          <div class="tags">Subject tags: cataloguing, archive</div>
+        </li>
+    </ul>
+
+    <nav class="pagination" id="browse-pagination" aria-label="Catalogue pages">
+      <button type="button" id="previous-page" disabled>Previous page</button>
+      <a href="browse.html" id="page-1" aria-current="page" aria-label="Page 1, current page">1</a>
+      <a href="browse.html?page=2" id="page-2">2</a>
+      <a href="browse.html?page=3" id="page-3">3</a>
+      <a href="browse.html?page=2" id="next-page">Next page</a>
+      <a href="browse.html?page=2" id="next-arrow" class="arrow" aria-hidden="true" tabindex="-1">›</a>
+    </nav>
+  </main>
+</body>
+</html>
