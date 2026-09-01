@@ -99,6 +99,36 @@ class Box:
         """
         return (self.x + self.width // 2, self.y + self.height // 2)
 
+    def to_dict(self) -> dict[str, int]:
+        """Render this box as plain data, for a trace file or a log line.
+
+        Returns:
+            dict[str, int]: The four numbers, under the same keys
+            :meth:`from_dict` reads them back from.
+        """
+        return {"x": self.x, "y": self.y, "width": self.width, "height": self.height}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, int]) -> Box:
+        """Rebuild a box from plain data.
+
+        Args:
+            data: A mapping with ``x``, ``y``, ``width`` and ``height``.
+
+        Returns:
+            Box: The same values, typed.
+
+        Raises:
+            KeyError: If any of the four is missing. A box with a missing side
+                is not a box, so there is no sensible default to fall back to.
+        """
+        return cls(
+            x=data["x"],
+            y=data["y"],
+            width=data["width"],
+            height=data["height"],
+        )
+
 
 @dataclass(frozen=True)
 class Element:
@@ -145,25 +175,56 @@ class Element:
             line += f' = "{self.text}"'
         return line
 
+    def to_dict(self) -> dict[str, Any]:
+        """Render this element as plain data, for a trace file.
 
-def _element_from(record: dict[str, Any]) -> Element:
-    """Convert one record from the injected script into an :class:`Element`.
+        Every field is written, not just the ones a prompt shows. A trace is
+        read after the run, by someone asking why a step went the way it did,
+        and the box is often the answer -- so it is kept even though the
+        planner never sees it.
 
-    Args:
-        record: One entry of the script's return value.
+        Returns:
+            dict[str, Any]: JSON-safe values, under the same keys
+            :meth:`from_dict` reads them back from.
+        """
+        return {
+            "id": self.id,
+            "tag": self.tag,
+            "role": self.role,
+            "name": self.name,
+            "text": self.text,
+            "box": self.box.to_dict(),
+        }
 
-    Returns:
-        Element: The same values, typed.
-    """
-    box = record["box"]
-    return Element(
-        id=record["id"],
-        tag=record["tag"],
-        role=record["role"],
-        name=record["name"],
-        text=record["text"],
-        box=Box(x=box["x"], y=box["y"], width=box["width"], height=box["height"]),
-    )
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Element:
+        """Rebuild an element from plain data.
+
+        This is also how a freshly extracted element is built, because the
+        injected script emits exactly the shape :meth:`to_dict` writes. Keeping
+        the two shapes identical is what stops a trace from describing a
+        different element than the one the run acted on.
+
+        Args:
+            data: One record, either from the injected script or from a trace.
+
+        Returns:
+            Element: The same values, typed.
+
+        Raises:
+            KeyError: If a field is missing. Every field is required; an
+                element with no role or no box cannot be reasoned about, and
+                filling one in with a default would hide the real problem,
+                which is that whatever produced the record is broken.
+        """
+        return cls(
+            id=data["id"],
+            tag=data["tag"],
+            role=data["role"],
+            name=data["name"],
+            text=data["text"],
+            box=Box.from_dict(data["box"]),
+        )
 
 
 def extract_elements(page: Page, *, text_limit: int = TEXT_LIMIT) -> tuple[Element, ...]:
@@ -193,7 +254,7 @@ def extract_elements(page: Page, *, text_limit: int = TEXT_LIMIT) -> tuple[Eleme
             step and observes again; it is not this function's to recover.
     """
     records = page.evaluate(_script(), {"textLimit": text_limit})
-    return tuple(_element_from(record) for record in records)
+    return tuple(Element.from_dict(record) for record in records)
 
 
 def describe_elements(elements: tuple[Element, ...]) -> str:
