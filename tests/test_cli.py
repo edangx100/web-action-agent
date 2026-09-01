@@ -22,10 +22,12 @@ underneath. The parsing is most of what this module is.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
 import typer
+from plain_text import plain
 from typer.testing import CliRunner
 
 from web_action_agent import cli
@@ -89,17 +91,34 @@ def _no_configuration_needed(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
 
 
-def invoke(argv: list[str]) -> Any:
+@dataclass(frozen=True)
+class Invocation:
+    """What one run of the command line produced.
+
+    Attributes:
+        exit_code: The number the command exited with.
+        output: Everything it printed, with terminal styling stripped -- see
+            :mod:`plain_text` for why that has to happen before any assertion
+            touches it.
+    """
+
+    exit_code: int
+    output: str
+
+
+def invoke(argv: list[str]) -> Invocation:
     """Run the command line with the given arguments, as a shell would.
 
     Args:
         argv: The arguments after the program name, e.g. ``["run", "--help"]``.
 
     Returns:
-        Result: typer's record of the invocation -- its exit code, its output,
-        and any exception that escaped.
+        Invocation: The exit code and the printed output as words, so that a
+        test asserting on the output means the same thing on a laptop and on a
+        build server -- which style the output differently.
     """
-    return runner.invoke(app, argv, catch_exceptions=False)
+    result = runner.invoke(app, argv, catch_exceptions=False)
+    return Invocation(exit_code=result.exit_code, output=plain(result.output))
 
 
 # --- Every command explains itself ------------------------------------------

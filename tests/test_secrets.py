@@ -28,6 +28,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from plain_text import plain
 
 from web_action_agent import cli
 from web_action_agent.capabilities import (
@@ -429,7 +430,7 @@ def test_help_prints_with_no_keys_and_no_configuration(
     monkeypatch.setattr("sys.argv", ["waa", "--help"])
     assert cli.main() == 0
 
-    printed = capsys.readouterr().out
+    printed = plain(capsys.readouterr().out)
     # Case-folded because the wording of the usage line belongs to the argument
     # parser, not to this project. What matters here is that help was produced
     # at all with no key and no settings file in sight.
