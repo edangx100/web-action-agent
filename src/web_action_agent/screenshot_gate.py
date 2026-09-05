@@ -1,11 +1,15 @@
 """When a screenshot is worth what it costs, and why that went the way it did.
 
-An image is by far the most expensive thing this agent can put in a prompt: the
-same page as an annotated screenshot costs many times what it costs as an
-element list plus its text. Paying that on every step of every run would roughly
-decide the project's cost-per-task figure on its own — and would buy very little,
-because most steps are ordinary. A search box and a submit button are perfectly
-legible as text; nothing is clearer for having been drawn.
+A screenshot is the costliest channel an observation has, though not for the
+reason people assume. At this project's viewport an image is worth roughly
+1,100-1,400 tokens, which is comparable to the text channels rather than many
+times them. What makes it expensive is everything around the tokens: it routes
+the step to a different and pricier vision model, it is slower, and one of the
+shipped vision routes cannot constrain decoding to a schema at all, so those
+steps also buy extra validator retries. Paying all of that on every step would
+buy very little, because most steps are ordinary — a search box and a submit
+button are perfectly legible as text, and nothing is clearer for having been
+drawn.
 
 So the screenshot is the *secondary* channel, sent only when the text channels
 look unreliable. This module is that judgement, and nothing else: it takes the
