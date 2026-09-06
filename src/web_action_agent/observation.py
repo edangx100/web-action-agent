@@ -16,11 +16,12 @@ downstream of the browser reads it instead of asking the browser again.
    like "how much does it cost?" would be unanswerable without this. It is
    always present, and truncated to a budget, because page text is unbounded
    and a prompt is not.
-3. The *screenshot* — optional. An image costs many times what the same page
-   costs as text, and most steps do not need one, so it is sent only when the
-   text channels look unreliable, and never at all when the configured model
-   cannot see images. That last case is why the first two channels have to be
-   enough on their own: nothing here may hard-depend on vision.
+3. The *screenshot* — optional. An image is worth roughly as many tokens as
+   the two text channels together, but carrying one routes the step to a
+   slower and pricier vision model, so it is sent only when the text channels
+   look unreliable — and never at all when the configured model cannot see
+   images. That last case is why the first two channels have to be enough on
+   their own: nothing here may hard-depend on vision.
 
 Alongside them, the URL and the page title — cheap, and the two things that
 tell a reader of the trace *which* page all of the above describes.

@@ -561,6 +561,10 @@ class ModelClient:
         """
         self.profile = profile
         self.timeout_s = timeout_s
+        # Screenshots discarded by observation_message for want of a vision
+        # route. Expected to stay at zero; see the property for why it is
+        # counted rather than raised on.
+        self._dropped_screenshots = 0
         if api_key:
             register_secret(api_key)
         self._transport = transport or OpenAI(
@@ -615,6 +619,56 @@ class ModelClient:
         """
         return self.profile.supports_vision
 
+    @property
+    def dropped_screenshots(self) -> int:
+        """int: Screenshots discarded because this profile cannot receive one.
+
+        Expected to be zero on a correctly wired run. The screenshot gate
+        already answers "no screenshot" for every step of a profile without a
+        vision route, so an image should never be read off disk in the first
+        place; a non-zero count here means some caller went around the gate.
+
+        It is a count rather than an exception because the guarantee this
+        backstop exists to serve is that the run *keeps going* on a text-only
+        endpoint. But a drop nobody can see afterwards is its own kind of bug,
+        so the number is kept for the trace to report.
+        """
+        return self._dropped_screenshots
+
+    def observation_message(
+        self, text: str, *, screenshot_png: bytes | None = None
+    ) -> dict[str, Any]:
+        """Build the planner's message for one observation, with or without vision.
+
+        This is what makes "no vision model" a degraded mode instead of a dead
+        run. :func:`user_message` attaches an image to anything it is given, and
+        :meth:`complete` then refuses the call outright when the profile has no
+        vision route. That refusal is right as a last line of defence -- sending
+        an image to a model that cannot read one is worse than stopping -- but
+        it is useless as a way to finish a task. Built here instead, the image
+        is left behind and the step proceeds on its text channels, which are the
+        channels that have to be sufficient anyway.
+
+        The two defences are deliberately independent. The screenshot gate
+        decides not to ask for an image; this decides not to send one it was
+        handed regardless. Either alone would hold the guarantee, so a bug in
+        one does not breach it.
+
+        Args:
+            text: The observation and the task, already rendered for the prompt.
+            screenshot_png: PNG bytes of the annotated screenshot, or None for a
+                text-only step. Bytes given under a profile with no vision route
+                are dropped, and the drop counted in :attr:`dropped_screenshots`.
+
+        Returns:
+            dict[str, Any]: A user message carrying the image only when this
+            client can actually deliver it, and text alone otherwise.
+        """
+        if screenshot_png is not None and not self.supports_vision:
+            self._dropped_screenshots += 1
+            screenshot_png = None
+        return user_message(text, screenshot_png=screenshot_png)
+
     def complete(
         self,
         messages: Sequence[Mapping[str, Any]],
@@ -629,8 +683,11 @@ class ModelClient:
 
         Args:
             messages: Chat messages, built with :func:`system_message` and
-                :func:`user_message`. An image part in any of them makes this a
-                vision call and selects the profile's vision route.
+                :meth:`observation_message`. An image part in any of them makes
+                this a vision call and selects the profile's vision route -- or,
+                where the profile has none, fails the call. Building the user
+                message through :meth:`observation_message` is what keeps a
+                text-only run from ever reaching that failure.
             schema: JSON Schema the reply must satisfy. Supplying one asks the
                 endpoint to constrain decoding where the route supports it, and
                 makes the reply be parsed either way.

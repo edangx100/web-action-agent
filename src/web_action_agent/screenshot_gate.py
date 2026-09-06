@@ -205,6 +205,24 @@ class ScreenshotGate:
         """int: Consecutive DOM-only planner failures recorded so far."""
         return self._dom_failures
 
+    @property
+    def text_only(self) -> bool:
+        """bool: Whether this run can never carry a screenshot.
+
+        True when the profile serves no vision model, in which case
+        :meth:`decide` answers "no" for every step whatever the thresholds say.
+        Exposed so a caller can skip work it already knows is wasted -- reading
+        a PNG off disk and base64-encoding it for a prompt it will not go in --
+        and so a trace can state the mode the run was in once, instead of
+        leaving a reader to infer it from every step's trigger.
+
+        This is a fact about the endpoint, not a setting. Nothing in the agent
+        may turn it off, which is the point: the two text channels have to be
+        enough on their own, so the possibility of an image never becomes a
+        requirement for one.
+        """
+        return not self._supports_vision
+
     def decide(self, *, element_count: int) -> GateDecision:
         """Decide whether this step's observation carries a screenshot.
 
