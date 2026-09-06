@@ -27,6 +27,7 @@ PAGES = [
     ("form-complete.html", 'id="reference-number"'),
     ("consent.html", 'id="consent-modal"'),
     ("article.html", 'id="article-heading"'),
+    ("ledger.html", 'id="ledger-heading"'),
 ]
 """list[tuple[str, str]]: Each page, paired with an element only that page has.
 
