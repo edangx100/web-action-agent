@@ -75,6 +75,22 @@ def test_pip_install_from_requirements_provides_both_entry_points(tmp_path):
         ),
         "load_config() from an installed wheel",
     )
+    # Same for the planner's system prompt, which is a data file one directory
+    # deeper. A build that flattened or skipped the subdirectory would import
+    # cleanly and fail on the first step of the first run.
+    assert_ok(
+        run(
+            [
+                python.as_posix(),
+                "-c",
+                (
+                    "from web_action_agent.planner import PROMPT_PATH; "
+                    "assert PROMPT_PATH.read_text(encoding='utf-8').strip()"
+                ),
+            ]
+        ),
+        "planner prompt readable from an installed wheel",
+    )
     assert_ok(
         run([python.as_posix(), "-m", "web_action_agent", "--help"]),
         "python -m web_action_agent --help",

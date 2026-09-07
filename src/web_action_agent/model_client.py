@@ -126,11 +126,18 @@ class ModelResponseError(ModelClientError):
 
     Attributes:
         text: The raw reply, kept so a retry prompt can quote what went wrong.
+        record: What the failed call cost, when the failure happened after the
+            endpoint answered. A reply that could not be parsed was still
+            billed, and a run whose reported cost quietly omitted its wasted
+            calls would flatter itself -- so the record travels out on the
+            exception rather than being lost with it. None where the call never
+            got far enough to have a cost.
     """
 
-    def __init__(self, message: str, *, text: str = "") -> None:
+    def __init__(self, message: str, *, text: str = "", record: CallRecord | None = None) -> None:
         super().__init__(message)
         self.text = text
+        self.record = record
 
 
 class Route(BaseModel):
@@ -386,6 +393,12 @@ class CallRecord:
         cost_usd: Dollars, filled in later from the checked-in pricing table.
             None where the route is free, local, or unpriced — reported as
             unknown rather than guessed at as zero.
+        schema_enforced: Whether the endpoint was asked to constrain decoding
+            to the schema, rather than merely being shown one in the prompt.
+            False covers both "no schema was asked for" and "this route cannot
+            honour one", which is what makes the field worth recording: a run
+            with a high rate of unparseable replies is explained by these being
+            False, and that is a routing problem rather than a model one.
     """
 
     profile: str
@@ -396,6 +409,7 @@ class CallRecord:
     latency_s: float
     finish_reason: str | None
     cost_usd: float | None = None
+    schema_enforced: bool = False
 
     @property
     def total_tokens(self) -> int | None:
@@ -707,7 +721,9 @@ class ModelClient:
             ModelClientError: If the call itself failed — network, auth, rate
                 limit, or an image sent to a profile with no vision route.
             ModelResponseError: If a schema was asked for and the reply is not
-                a JSON object. The caller's bounded retry is meant to catch it.
+                a JSON object. The caller's bounded retry is meant to catch it,
+                and the exception carries the call's cost record so the retry
+                can still bill the attempt.
         """
         vision = has_image(messages)
         route = self.profile.route_for(vision=vision)
@@ -721,7 +737,8 @@ class ModelClient:
             request["seed"] = seed
         if max_tokens is not None:
             request["max_tokens"] = max_tokens
-        if schema is not None and route.supports_json_schema:
+        constrained = schema is not None and route.supports_json_schema
+        if constrained:
             # Schema-constrained decoding: the endpoint may emit nothing but a
             # conforming object, so there is no parse to fail. Where the route
             # does not support it, the schema still reaches the model through
@@ -756,8 +773,17 @@ class ModelClient:
             completion_tokens=self._usage(completion, "completion_tokens"),
             latency_s=latency_s,
             finish_reason=finish_reason,
+            schema_enforced=constrained,
         )
-        data = parse_json_object(text) if schema is not None else None
+        if schema is None:
+            return ModelResponse(text=text, data=None, record=record)
+        try:
+            data = parse_json_object(text)
+        except ModelResponseError as error:
+            # Re-raised rather than propagated so the caller's retry can bill
+            # the call it is retrying. Same message, same reply text, now with
+            # the cost attached.
+            raise ModelResponseError(str(error), text=error.text, record=record) from error
         return ModelResponse(text=text, data=data, record=record)
 
     @staticmethod
