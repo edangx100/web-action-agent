@@ -1,0 +1,15 @@
+# The fixture site's instructions to automated visitors.
+#
+# Real, not decorative: the agent's politeness tests read this file over HTTP
+# exactly as they would read a real site's, so the rules below are what
+# "respects robots.txt" is asserted against.
+#
+# `/ledger.html` is excluded deliberately. It is a real page, reachable, and
+# linked from the home page — which is the only interesting case. A rule that
+# excluded a path nobody could reach anyway would pass whether the agent read
+# this file or not.
+
+User-agent: *
+Disallow: /ledger.html
+Disallow: /private/
+Crawl-delay: 2

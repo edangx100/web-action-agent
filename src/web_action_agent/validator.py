@@ -22,8 +22,12 @@ decorative.
 3. *The action type is permitted.* A run can be configured with a narrower
    vocabulary than the full seven -- the evaluation's cold pass runs with no
    skill library, so ``use_skill`` is simply not on the table.
-4. *Navigation stays on the allowlist.* Where the run may go was decided before
-   its first step; this is where that decision is applied.
+4. *Navigation is allowed, by us and by them.* Where the run may go was decided
+   before its first step, and this is where that decision is applied. It is
+   also where the *site's* decision is applied: an address its ``robots.txt``
+   asks automated visitors to leave alone is refused here, before the browser
+   is asked, because fetching a page and then discarding it is exactly what
+   that file exists to prevent.
 5. *The skill is usable.* Named, active, belongs to this site, and given the
    parameters it declares.
 
@@ -60,6 +64,7 @@ from .allowlist import Allowlist, AllowlistError, derive_domain, host_of, normal
 from .model_client import CallRecord
 from .observation import Observation
 from .planner import PlannerDecision
+from .politeness import ROBOTS_DISALLOWED, RobotsPolicy
 
 #: The proposal was not one of the seven actions, correctly spelled. Also the
 #: code a planner reply that could not be parsed at all is reported under: a
@@ -72,7 +77,9 @@ UNKNOWN_ELEMENT = "unknown_element"
 #: The action type is not one this run allows.
 FORBIDDEN_ACTION = "forbidden_action"
 
-#: The URL may not be navigated to -- off the allowlist, or not a web URL.
+#: The URL may not be navigated to -- off the allowlist, not a web URL, or a
+#: path the site's own robots.txt excludes. Which of those it was is the
+#: rejection's ``cause``.
 BLOCKED_NAVIGATION = "blocked_navigation"
 
 #: The named skill cannot be replayed here: unknown, retired, from another
@@ -252,6 +259,7 @@ class Validator:
         *,
         skills: SkillLibrary | None = None,
         permitted: Iterable[str] | None = None,
+        robots: RobotsPolicy | None = None,
     ) -> None:
         """Build the gate for one run.
 
@@ -262,6 +270,10 @@ class Validator:
                 forgetting an argument.
             skills: The run's skill library, or None for a run without one --
                 a cold evaluation pass, or any run before a library exists.
+            robots: What each site's ``robots.txt`` allows, or None for a run
+                configured not to read them. Consulted only for ``navigate``,
+                and only after the allowlist has passed -- so a run never
+                requests a file from a site it was never going to visit.
             permitted: Action names this run allows. Defaults to all seven,
                 minus ``use_skill`` when there is no library to replay from.
 
@@ -274,6 +286,7 @@ class Validator:
         """
         self._allowlist = allowlist
         self._skills = skills
+        self._robots = robots
 
         if permitted is None:
             # No library means no skill can be usable, so the honest answer to
@@ -352,6 +365,13 @@ class Validator:
             refusal = self._allowlist.check(action.url)
             if refusal is not None:
                 return _refuse(BLOCKED_NAVIGATION, refusal.message, cause=refusal.code)
+            # Second, and only if the address survived the first: reading a
+            # site's robots.txt means asking that site for a file, which is not
+            # worth doing for an address this run was never going to visit.
+            if self._robots is not None:
+                complaint = self._robots.refusal(action.url)
+                if complaint is not None:
+                    return _refuse(BLOCKED_NAVIGATION, complaint, cause=ROBOTS_DISALLOWED)
 
         if isinstance(action, UseSkill):
             rejection = self._check_skill(action, observation)

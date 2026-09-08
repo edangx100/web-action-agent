@@ -46,6 +46,8 @@ from typing import Annotated, Any
 import yaml
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError
 
+from .politeness import DEFAULT_USER_AGENT
+
 #: Prefix on every environment variable this project reads. A field named
 #: ``max_steps`` is set by ``WAA_MAX_STEPS``; the mapping is mechanical, so
 #: there is no table here to fall out of step with the schema.
@@ -226,6 +228,23 @@ class Config(BaseModel):
         default=1.0,
         ge=0.0,
         description="Politeness floor: minimum seconds between navigations to one domain.",
+    )
+    user_agent: str = Field(
+        default=DEFAULT_USER_AGENT,
+        min_length=1,
+        description=(
+            "What the browser tells every site it is. Truthful on purpose: a "
+            "tool that impersonates a person cannot complain about being "
+            "treated as one."
+        ),
+    )
+    respect_robots: bool = Field(
+        default=True,
+        description=(
+            "Read each site's robots.txt and refuse the paths it excludes. "
+            "Turning this off is a decision to be made deliberately, not a "
+            "default anyone reaches by forgetting."
+        ),
     )
     allowlist_extra: DomainList = Field(
         default=(),

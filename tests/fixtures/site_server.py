@@ -42,6 +42,17 @@ class _Handler(SimpleHTTPRequestHandler):
 
     protocol_version = "HTTP/1.1"
 
+    def do_GET(self) -> None:
+        """Note who asked for what, then serve the file as usual.
+
+        The note is what lets a test assert on the *request* rather than on the
+        page that came back. What a browser claims about itself in JavaScript
+        and what actually arrives in an HTTP header are different questions,
+        and the header is the one a site owner sees.
+        """
+        self.server.requests.append((self.path, self.headers.get("User-Agent", "")))  # type: ignore[attr-defined]
+        super().do_GET()
+
     def log_message(self, format: str, *args: object) -> None:
         """Discard the per-request access log.
 
@@ -105,6 +116,10 @@ class StaticSite:
         handler = functools.partial(_Handler, directory=str(self.root))
         # Port 0 asks the operating system for any free port.
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        # Every request lands here as (path, user agent). Kept on the server
+        # rather than on this object because the handler, which is built anew
+        # for each request, can reach the server and nothing else.
+        self._server.requests = []  # type: ignore[attr-defined]
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             name="fixture-site",
@@ -128,6 +143,21 @@ class StaticSite:
             self._thread.join(timeout=5)
         self._server = None
         self._thread = None
+
+    @property
+    def requests(self) -> list[tuple[str, str]]:
+        """list[tuple[str, str]]: Every request served, as (path, user agent).
+
+        Live: a test may clear it to ignore what came before, and read it
+        afterwards to see what a browser actually sent.
+
+        Raises:
+            RuntimeError: If the server is not running, since an empty list
+                would otherwise read as "nothing was requested".
+        """
+        if self._server is None:
+            raise RuntimeError("this fixture site is not running")
+        return self._server.requests  # type: ignore[attr-defined]
 
     @property
     def port(self) -> int:

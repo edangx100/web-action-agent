@@ -52,6 +52,13 @@ own dialogs, and declines downloads. Whatever it did during a step comes back
 attached to that step's result, so a click that "did nothing" and a click that
 opened a tab and a dialog are distinguishable in the trace.
 
+**Waiting before knocking.** A navigation is the one action that asks a
+stranger's server for something, so it is the one action that waits: the
+run's throttle keeps a minimum gap between visits to a site, across every
+worker on the machine. The waiting is counted separately from the work, so
+that "the agent is slow" and "the agent is being polite" stay distinguishable
+in the run's numbers.
+
 **What is deliberately not here.** Whether the action was allowed is the
 validator's business and has already been settled -- this module does not
 re-check the allowlist, and reading it as a second gate would be a mistake.
@@ -75,6 +82,7 @@ from .actions import Action, Click, Done, Fill, Navigate, Press, Scroll, UseSkil
 from .browser import ACTION_TIMEOUT_S, BrowserEvent, TaskSession
 from .observation import Observation
 from .observer import ELEMENT_MARK
+from .politeness import Throttle
 
 #: The browser accepted the command. Not a claim that it achieved anything --
 #: a click on the wrong button succeeds. The next observation says what changed.
@@ -234,9 +242,13 @@ class ExecutionResult:
         url: The page's address afterwards. Recorded because the most common
             effect of a step is that it moved, and because a *failed* step that
             moved the page anyway is worth being able to see.
-        elapsed_s: How long the attempt took, in seconds. The timeout budget is
-            spent here, so this is where a run that is slow rather than broken
-            shows itself.
+        elapsed_s: How long the attempt took, in seconds, waiting included.
+            The timeout budget is spent here, so this is where a run that is
+            slow rather than broken shows itself.
+        waited_s: How much of ``elapsed_s`` was spent waiting to be polite
+            rather than doing anything. Kept apart because the two are read
+            for different reasons: one is a cost to be reduced, the other is a
+            cost the project chose to pay.
         events: Anything the browser did during this step that the action did
             not ask for -- a tab opened, a dialog dismissed, a download
             declined. Usually empty. When it is not, it is often the whole
@@ -248,6 +260,7 @@ class ExecutionResult:
     detail: str = ""
     url: str = ""
     elapsed_s: float = 0.0
+    waited_s: float = 0.0
     events: tuple[BrowserEvent, ...] = ()
 
     @property
@@ -285,6 +298,7 @@ class ExecutionResult:
             "detail": self.detail,
             "url": self.url,
             "elapsed_s": round(self.elapsed_s, 3),
+            "waited_s": round(self.waited_s, 3),
             "events": [event.to_dict() for event in self.events],
         }
 
@@ -310,6 +324,7 @@ class Executor:
         settle_timeout_s: float = SETTLE_TIMEOUT_S,
         navigation_grace_s: float = NAVIGATION_GRACE_S,
         tab_grace_s: float = TAB_GRACE_S,
+        throttle: Throttle | None = None,
     ) -> None:
         """Bind an executor to a page.
 
@@ -331,12 +346,20 @@ class Executor:
                 one. See :data:`NAVIGATION_GRACE_S`.
             tab_grace_s: How long any other click waits to hear that it opened
                 a tab. See :data:`TAB_GRACE_S`.
+            throttle: The run's politeness throttle, waited on before every
+                navigation. None leaves navigations unthrottled, which is right
+                for a test against a local fixture and wrong for anything
+                pointed at a real site.
         """
         self._session = target if isinstance(target, TaskSession) else TaskSession(target)
         self._action_timeout_ms = action_timeout_s * 1000
         self._settle_timeout_ms = settle_timeout_s * 1000
         self._navigation_grace_ms = navigation_grace_s * 1000
         self._tab_grace_ms = tab_grace_s * 1000
+        self._throttle = throttle
+        # Set by a navigation that waited, read once by `execute`, and cleared
+        # there. A step that did not navigate leaves it at zero.
+        self._waited_s = 0.0
 
     @property
     def page(self) -> Page:
@@ -378,6 +401,7 @@ class Executor:
             browser did along the way that nobody asked for.
         """
         started = time.monotonic()
+        self._waited_s = 0.0
         try:
             status, detail = self._perform(action, observation)
         except BrowserFailure as error:
@@ -388,6 +412,7 @@ class Executor:
             detail=detail,
             url=self._current_url(),
             elapsed_s=time.monotonic() - started,
+            waited_s=self._waited_s,
             # Drained rather than read, so each step carries its own events and
             # no step inherits the last one's. Anything that happened between
             # two actions arrives with the later of them.
@@ -538,12 +563,20 @@ class Executor:
         says something, and the agent reads it in the next observation like any
         other page; only a failure to reach the site at all is a failed step.
 
+        The wait comes first, and it is the one place a navigation can be
+        delayed on purpose. Doing it here rather than in whoever calls the
+        executor is the same argument the validator makes about its own checks:
+        a rule that every caller has to remember is a rule that one caller will
+        forget.
+
         Args:
             action: The navigation.
 
         Returns:
             tuple[str, str]: The status and its detail sentence.
         """
+        if self._throttle is not None:
+            self._waited_s = self._throttle.wait(action.url)
         self.page.goto(action.url, timeout=self._action_timeout_ms)
         return OK, ""
 

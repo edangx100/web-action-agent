@@ -62,6 +62,7 @@ from playwright.sync_api import (
 from playwright.sync_api import Error as BrowserFailure
 
 from .config import Config
+from .politeness import DEFAULT_USER_AGENT
 
 #: Seconds any single browser operation may take before it is called a timeout.
 #: Mirrors the configured default; a browser started without a Config is a test
@@ -123,12 +124,16 @@ class BrowserSettings:
             benchmark.
         action_timeout_s: How long any one browser operation may take. Reaching
             it is a reported timeout, never an exception that ends the run.
+        user_agent: What the browser tells every site it is. Sent on every
+            request the page makes, so it is the one setting here that a
+            stranger's server sees.
     """
 
     headed: bool = False
     viewport_width: int = 1280
     viewport_height: int = 800
     action_timeout_s: float = ACTION_TIMEOUT_S
+    user_agent: str = DEFAULT_USER_AGENT
 
     @classmethod
     def from_config(cls, config: Config) -> BrowserSettings:
@@ -145,6 +150,7 @@ class BrowserSettings:
             viewport_width=config.viewport_width,
             viewport_height=config.viewport_height,
             action_timeout_s=config.action_timeout_s,
+            user_agent=config.user_agent,
         )
 
     @property
@@ -518,7 +524,13 @@ class BrowserProcess:
                 "browser is not running: call start(), or use it as a context manager"
             )
 
-        context = self._browser.new_context(viewport=self.settings.viewport)
+        # The user agent is set on the context rather than per request, so
+        # every request a page makes -- its images, its scripts, its background
+        # fetches -- says the same true thing about who is asking.
+        context = self._browser.new_context(
+            viewport=self.settings.viewport,
+            user_agent=self.settings.user_agent,
+        )
         # Set once on the context rather than passed to every call, so that an
         # operation nobody thought to pass a timeout to still cannot hang the
         # run for longer than the configured ceiling.
