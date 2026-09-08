@@ -54,6 +54,18 @@ SCRIPT_PATH = Path(__file__).resolve().parent / "extract_elements.js"
 #: enough to tell two elements apart, which is all the planner needs of them.
 TEXT_LIMIT = 120
 
+#: The attribute the injected script writes onto every element it numbers,
+#: holding that element's number. It is how the executor acts on the very node
+#: the observer numbered, a moment later and after the page may have moved:
+#: ``[data-waa-element-id="4"]`` finds element 4 or finds nothing at all, and
+#: finding nothing is the honest report that it went away.
+#:
+#: Declared here rather than in the script so that the one spelling of the name
+#: is shared by whoever writes it and whoever reads it. Prefixed with the
+#: project's short name because it is written into somebody else's page, where
+#: a generic ``data-id`` could collide with the site's own.
+ELEMENT_MARK = "data-waa-element-id"
+
 
 @functools.cache
 def _script() -> str:
@@ -242,6 +254,12 @@ def extract_elements(page: Page, *, text_limit: int = TEXT_LIMIT) -> tuple[Eleme
         text_limit: Longest accessible name or visible text to keep, in
             characters. Longer values are truncated with an ellipsis.
 
+    Each listed element is also marked in the page with its number, under
+    :data:`ELEMENT_MARK`. The listing is what the planner reads; the marks are
+    what the executor acts through. Marks from a previous call on the same
+    document are cleared first, so the marks always describe this listing and
+    no earlier one.
+
     Returns:
         tuple[Element, ...]: The visible, enabled, unobstructed interactive
         elements, numbered from 1 in document order. Empty for a page that
@@ -253,7 +271,7 @@ def extract_elements(page: Page, *, text_limit: int = TEXT_LIMIT) -> tuple[Eleme
             script is running. The controller categorizes that as a failed
             step and observes again; it is not this function's to recover.
     """
-    records = page.evaluate(_script(), {"textLimit": text_limit})
+    records = page.evaluate(_script(), {"textLimit": text_limit, "markAttribute": ELEMENT_MARK})
     return tuple(Element.from_dict(record) for record in records)
 
 

@@ -31,6 +31,14 @@
  * which is why history records what an element *was* rather than only its
  * number.
  *
+ * Each survivor also has its number written onto it as an attribute, so that
+ * the executor can act on the same node the observer numbered. That matters
+ * because the two happen at different moments: between them the page may have
+ * re-rendered, and an element found again by its position or its label would
+ * be whatever is standing in that place now. A mark cannot make that mistake —
+ * if the node is gone, the mark is gone with it, and the step is reported as a
+ * vanished element instead of a click on the wrong thing.
+ *
  * **Not traversed:** iframes and shadow roots. Out of scope for v0, and
  * silently so — an element inside either is simply not listed, so the agent
  * cannot refer to it and the validator never sees a reference to check.
@@ -119,6 +127,12 @@
   const viewportWidth = document.documentElement.clientWidth;
   const viewportHeight = document.documentElement.clientHeight;
   const textLimit = options.textLimit;
+  // The attribute written onto each element that survives the filters, holding
+  // the number the planner is shown. Python owns the spelling and passes it in,
+  // so there is one name rather than two that have to be kept in step. Absent
+  // when a caller wants a listing and no marks -- a diagnostic dump, say -- in
+  // which case the page is left exactly as it was found.
+  const markAttribute = options.markAttribute;
 
   /**
    * Reduces text to the single-line form the planner is shown.
@@ -520,6 +534,15 @@
   }
 
   const elements = [];
+  // Marks from an earlier observation of this same document would leave two
+  // elements answering to the same number, so they go before any are written.
+  // Only same-document marks can survive to be cleared: a navigation replaces
+  // the document and takes its marks with it.
+  if (markAttribute) {
+    for (const stale of document.querySelectorAll("[" + markAttribute + "]")) {
+      stale.removeAttribute(markAttribute);
+    }
+  }
   // `querySelectorAll` answers in document order, which is what makes the
   // numbering below deterministic: same page, same numbers, every time.
   for (const element of document.querySelectorAll(CANDIDATE_SELECTOR)) {
@@ -537,8 +560,17 @@
     if (!isReachable(element, box)) {
       continue;
     }
+    const id = elements.length + 1;
+    if (markAttribute) {
+      // How the executor finds this exact node a moment later: the number the
+      // planner was shown, written onto the node it was assigned to. Matching
+      // on position or on name instead would act on whatever holds the place
+      // now, which after a re-render is a different thing wearing the same
+      // label.
+      element.setAttribute(markAttribute, String(id));
+    }
     elements.push({
-      id: elements.length + 1,
+      id: id,
       tag: element.tagName.toLowerCase(),
       role: role,
       text: truncate(visibleText(element)),

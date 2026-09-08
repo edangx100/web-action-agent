@@ -9,7 +9,9 @@ from collections.abc import Iterator
 import pytest
 from fixtures.site_server import StaticSite
 from marker_policy import policy_violations, violation_report
-from playwright.sync_api import Browser, Page, sync_playwright
+from playwright.sync_api import Page, Playwright, sync_playwright
+
+from web_action_agent.browser import BrowserProcess, BrowserSettings
 
 VIEWPORT = {"width": 1280, "height": 800}
 """dict[str, int]: The viewport every browser test runs at.
@@ -19,6 +21,18 @@ than read from it: element extraction is viewport-only and the annotated
 screenshot is numbered to match, so a test whose viewport came from local
 configuration would be testing a different page than continuous integration
 was.
+"""
+
+BROWSER_SETTINGS = BrowserSettings(
+    viewport_width=VIEWPORT["width"],
+    viewport_height=VIEWPORT["height"],
+)
+"""BrowserSettings: How the suite's browser is started.
+
+The suite drives the agent's own browser lifecycle rather than a second copy of
+it, so a test page is opened exactly the way a task's page is: one process for
+the session, one fresh context per test. Anything that broke isolation for a
+run would break it here too, in front of every browser test at once.
 """
 
 
@@ -65,7 +79,22 @@ def fixture_site() -> Iterator[StaticSite]:
 
 
 @pytest.fixture(scope="session")
-def browser() -> Iterator[Browser]:
+def playwright() -> Iterator[Playwright]:
+    """Run one Playwright driver for the whole test session.
+
+    Exposed as a fixture of its own because the synchronous API allows exactly
+    one driver per thread: a test that starts its own browser process has to
+    borrow this one rather than start a second, which would fail outright.
+
+    Yields:
+        Playwright: The running driver.
+    """
+    with sync_playwright() as driver:
+        yield driver
+
+
+@pytest.fixture(scope="session")
+def browser_process(playwright: Playwright) -> Iterator[BrowserProcess]:
     """Run one headless Chromium for the whole test session.
 
     Launching a browser costs a second or so, which is worth paying once and
@@ -73,19 +102,18 @@ def browser() -> Iterator[Browser]:
     never touches this directly -- it asks for ``page``, which brings its own
     context.
 
+    Args:
+        playwright: The session's driver, borrowed rather than started again.
+
     Yields:
-        Browser: The running browser.
+        BrowserProcess: The running browser.
     """
-    with sync_playwright() as playwright:
-        instance = playwright.chromium.launch()
-        try:
-            yield instance
-        finally:
-            instance.close()
+    with BrowserProcess(BROWSER_SETTINGS, playwright=playwright) as process:
+        yield process
 
 
 @pytest.fixture
-def page(browser: Browser) -> Iterator[Page]:
+def page(browser_process: BrowserProcess) -> Iterator[Page]:
     """Open a fresh page, in a fresh browser context, for one test.
 
     The context is the isolation boundary: its own cookies, its own storage,
@@ -94,13 +122,10 @@ def page(browser: Browser) -> Iterator[Page]:
     not decide what a later one sees.
 
     Args:
-        browser: The session's browser.
+        browser_process: The session's browser.
 
     Yields:
         Page: A blank page sized to :data:`VIEWPORT`.
     """
-    context = browser.new_context(viewport=VIEWPORT)
-    try:
-        yield context.new_page()
-    finally:
-        context.close()
+    with browser_process.task_page() as page:
+        yield page
