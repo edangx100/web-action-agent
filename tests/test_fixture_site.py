@@ -28,6 +28,9 @@ PAGES = [
     ("consent.html", 'id="consent-modal"'),
     ("article.html", 'id="article-heading"'),
     ("ledger.html", 'id="ledger-heading"'),
+    ("popup.html", 'id="popup-heading"'),
+    ("confirm.html", 'id="dialog-heading"'),
+    ("download.html", 'id="download-heading"'),
 ]
 """list[tuple[str, str]]: Each page, paired with an element only that page has.
 
@@ -41,6 +44,9 @@ ASSETS = [
     ("static/form.js", "javascript"),
     ("static/complete.js", "javascript"),
     ("static/consent.js", "javascript"),
+    ("static/popup.js", "javascript"),
+    ("static/confirm.js", "javascript"),
+    ("static/download.js", "javascript"),
 ]
 """list[tuple[str, str]]: Each supporting asset, paired with its content type.
 

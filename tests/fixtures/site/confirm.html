@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cancel a reservation — Northgate Public Library</title>
+  <link rel="stylesheet" href="static/site.css">
+</head>
+<body data-page="confirm">
+  <!-- Exercises the browser's own dialogs: `alert` and `confirm`. They are
+       modal in the strongest sense -- while one is open the page runs no code
+       and answers no automation, so a run that ignores them does not fail, it
+       hangs. What the page does afterwards is written into the status line and
+       onto the body, so a test can tell which answer the dialog was given
+       without seeing the dialog itself. -->
+  <header class="site">
+    <div class="wordmark">Northgate Public Library</div>
+    <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="search.html">Search the catalogue</a>
+      <a href="browse.html">Browse the catalogue</a>
+      <a href="form-step-1.html">Join the library</a>
+      <a href="article.html">Reading room news</a>
+      <a href="consent.html">Member notices</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1 id="dialog-heading">Cancel a reservation</h1>
+    <p class="lede" id="dialog-status">Reservation 4471 is held until Friday.</p>
+
+    <p>
+      <button type="button" id="confirm-button">Cancel this reservation</button>
+      — asks the browser to confirm first.
+    </p>
+    <p>
+      <button type="button" id="alert-button">Opening hours</button>
+      — shows a plain notice with one button.
+    </p>
+  </main>
+
+  <script src="static/confirm.js"></script>
+</body>
+</html>

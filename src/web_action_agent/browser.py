@@ -16,24 +16,50 @@ the agent looks better than it is -- in a way that would never show up as a
 failure, only as a success it did not earn. Worse, it would be irreproducible:
 the same task run alone and run seventh would behave differently.
 
-So: one :class:`BrowserProcess` per worker, one :meth:`BrowserProcess.task_page`
-per task. The nesting is enforced by the shape of the API rather than by a
+So: one :class:`BrowserProcess` per worker, one
+:meth:`BrowserProcess.task_session` per task. The nesting is enforced by the shape of the API rather than by a
 convention -- a task gets its page from a context manager, and the context
 closes when the block ends whether the task succeeded, failed, or raised.
 
 **Only two callers.** The observer reads the page and the executor acts on it.
 Nothing else in the agent holds a page, which is what keeps "what the browser
 did" a question with one place to look.
+
+**The surprises a page can spring.** Three things happen on real sites that no
+action asked for, and each one ends a run that is not ready for it:
+
+* A link opens a **second tab**. The agent goes on looking at the tab it left,
+  sees a page that never changes, and concludes it is stuck.
+* The page opens one of the browser's own **dialogs** -- ``alert``,
+  ``confirm``. These are modal in the strongest sense: while one is open the
+  page runs no code and answers no automation. A run that ignores it does not
+  fail, it hangs, until something times out and reports the wrong reason.
+* A click starts a **download**. Files are out of scope, but the click still
+  happened and the agent still needs to know why no page arrived.
+
+:class:`TaskSession` handles all three, for every page a task opens, and writes
+each one down as a :class:`BrowserEvent`. Handling them anywhere else would
+mean handling them once per caller and forgetting one; writing them down is
+what turns "the agent went quiet for a step" into a line in the trace.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-from typing import Self
+from typing import Any, Self
 
-from playwright.sync_api import Browser, Page, Playwright, sync_playwright
+from playwright.sync_api import (
+    Browser,
+    BrowserContext,
+    Dialog,
+    Download,
+    Page,
+    Playwright,
+    sync_playwright,
+)
+from playwright.sync_api import Error as BrowserFailure
 
 from .config import Config
 
@@ -41,6 +67,30 @@ from .config import Config
 #: Mirrors the configured default; a browser started without a Config is a test
 #: or a one-off script, and should behave like a real run rather than hang.
 ACTION_TIMEOUT_S = 30.0
+
+
+#: A link or a script opened a second tab, and the agent is now looking at it.
+POPUP_ADOPTED = "popup_adopted"
+
+#: The active tab closed and the agent fell back to the one underneath.
+PAGE_CLOSED = "page_closed"
+
+#: One of the browser's own dialogs appeared and was dismissed.
+DIALOG_DISMISSED = "dialog_dismissed"
+
+#: A click offered a file. It was declined; files are out of scope.
+DOWNLOAD_IGNORED = "download_ignored"
+
+#: Everything that can happen to a task's pages without any action asking for
+#: it. Tests assert the list has not grown quietly, and a run's summary counts
+#: events by it -- "how often does this site open tabs?" is a question the
+#: trace should be able to answer.
+BROWSER_EVENTS = (
+    POPUP_ADOPTED,
+    PAGE_CLOSED,
+    DIALOG_DISMISSED,
+    DOWNLOAD_IGNORED,
+)
 
 
 class BrowserError(RuntimeError):
@@ -108,6 +158,245 @@ class BrowserSettings:
         return self.action_timeout_s * 1000
 
 
+@dataclass(frozen=True)
+class BrowserEvent:
+    """Something the browser did that no action asked for.
+
+    Frozen, like every other record in a step: this is evidence of what the
+    page did while the agent was doing something else, and it is written into
+    the trace beside the action it happened during.
+
+    Attributes:
+        kind: One of :data:`BROWSER_EVENTS`.
+        detail: One sentence saying what happened and what was done about it,
+            written for whoever reads the run afterwards.
+        url: The page the event concerns, where there is one. Empty for an
+            event about no particular address, such as a dialog.
+    """
+
+    kind: str
+    detail: str
+    url: str = ""
+
+    def summary(self) -> str:
+        """Render this event as the fragment a step log appends.
+
+        Returns:
+            str: e.g. ``popup_adopted: a new tab opened and is now the active
+            page``.
+        """
+        return f"{self.kind}: {self.detail}"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Render this event as plain data, for the run's trace.
+
+        Returns:
+            dict[str, Any]: JSON-safe values, under the same keys every time.
+        """
+        return {"kind": self.kind, "detail": self.detail, "url": self.url}
+
+
+class TaskSession:
+    """One task's pages: which one is active, and what they have done to us.
+
+    A task starts with one page and may end up with several, because a link
+    can open a tab. Something has to hold the answer to "which page is the
+    agent looking at *now*", and it cannot be the executor, which is handed a
+    page once and would keep acting on it long after the site moved the
+    conversation to another tab.
+
+    So the session owns that answer, the executor asks it every time, and the
+    three surprises in this module's docstring are handled here once for every
+    page the task opens -- including tabs that did not exist when the task
+    started.
+
+    Given a page but no context, the session is a plain holder: nothing is
+    watched, because there is nothing to watch new tabs *on*. That is the shape
+    a script or a test gets, and it is why an executor can still be handed a
+    bare page.
+
+    Attributes:
+        page: The page the agent is looking at now. Changes when a tab opens.
+    """
+
+    def __init__(self, page: Page, *, context: BrowserContext | None = None) -> None:
+        """Start a session on one page.
+
+        Args:
+            page: The task's first page.
+            context: The browsing context that page belongs to, when the
+                session should watch for new tabs, dialogs and downloads.
+                Omitted for a bare page nobody is watching.
+        """
+        self._active = page
+        self._context = context
+        self._events: list[BrowserEvent] = []
+        if context is not None:
+            # Registered after the first page exists, because the context
+            # announces *every* page it opens -- including that one, which is
+            # not a popup and must not be reported as one.
+            context.on("page", self._adopt)
+            self._watch(page)
+
+    @property
+    def page(self) -> Page:
+        """Page: The page the agent is looking at now."""
+        return self._active
+
+    def drain_events(self) -> tuple[BrowserEvent, ...]:
+        """Take everything recorded since the last time this was called.
+
+        Draining rather than accumulating is what lets each step's result carry
+        exactly the events that belong to it. Anything that happened between
+        two actions -- while the page was being observed, say -- is reported
+        with the next action, which is where a reader looking for it would go.
+
+        Returns:
+            tuple[BrowserEvent, ...]: The events, oldest first. Empty when
+            nothing has happened, which is most steps.
+        """
+        drained = tuple(self._events)
+        self._events.clear()
+        return drained
+
+    def _watch(self, page: Page) -> None:
+        """Subscribe to the surprises one page can spring.
+
+        Args:
+            page: A page belonging to this task, new or original.
+        """
+        page.on("dialog", self._dismiss)
+        page.on("download", self._decline)
+        page.on("close", self._release)
+
+    def _adopt(self, page: Page) -> None:
+        """Make a newly opened tab the active page.
+
+        Following the new tab is right far more often than not: a site that
+        opens one has moved the conversation there, and the page left behind is
+        finished with. The alternative -- staying put -- looks to the agent
+        exactly like a click that did nothing, which is the most expensive
+        thing a page can look like.
+
+        Args:
+            page: The tab the browser has just opened.
+        """
+        if page is self._active:
+            return
+        self._watch(page)
+        self._active = page
+        self._record(
+            POPUP_ADOPTED,
+            "a new tab opened and is now the page being acted on",
+            url=_url_of(page),
+        )
+
+    def _release(self, page: Page) -> None:
+        """Fall back to another tab when the active one closes.
+
+        A background tab closing changes nothing. The active one closing would
+        otherwise leave every later action failing against a page that no
+        longer exists, reporting a closed target rather than the plain fact
+        that the site shut the tab.
+
+        Args:
+            page: The page that has just closed.
+        """
+        if page is not self._active:
+            return
+        remaining = [open_page for open_page in self._pages() if open_page is not page]
+        if not remaining:
+            # Nothing to fall back to. The closed page is kept as the active
+            # one so that the next action fails honestly against it, rather
+            # than this method inventing a page that was never part of the task.
+            self._record(PAGE_CLOSED, "the last tab closed; the task has no page left")
+            return
+        self._active = remaining[-1]
+        self._record(
+            PAGE_CLOSED,
+            "the tab being acted on closed; back to the one underneath",
+            url=_url_of(self._active),
+        )
+
+    def _dismiss(self, dialog: Dialog) -> None:
+        """Answer one of the browser's own dialogs, and write down what it said.
+
+        Dismissed rather than accepted, deliberately. Accepting means answering
+        "yes" to a question nobody read -- delete the account, place the order,
+        leave the page and lose the form -- and an agent that quietly agrees to
+        things is worse than one that quietly declines them. The message is
+        recorded either way, so a run blocked by a dialog it needed to accept
+        shows exactly that in its trace instead of looking like a dead end.
+
+        Args:
+            dialog: The dialog the page opened.
+        """
+        self._record(DIALOG_DISMISSED, f"{dialog.type} dismissed: {dialog.message}")
+        # A dialog that has already been handled -- by a page that closed under
+        # it, say -- refuses a second answer, and that must not become the
+        # exception that ends the run.
+        with suppress(BrowserFailure):
+            dialog.dismiss()
+
+    def _decline(self, download: Download) -> None:
+        """Refuse a file the page offered, and write down that it was offered.
+
+        Downloads are out of scope for this agent: it reads pages. Cancelling
+        rather than saving keeps a large file from being fetched in full for
+        nothing, and recording it is what explains the step afterwards -- a
+        click that produced no new page is otherwise a mystery.
+
+        Args:
+            download: The download the page started.
+        """
+        self._record(
+            DOWNLOAD_IGNORED,
+            f"the page offered a file, {download.suggested_filename!r}; downloads are not handled",
+            url=download.url,
+        )
+        with suppress(BrowserFailure):
+            download.cancel()
+
+    def _pages(self) -> list[Page]:
+        """List the task's pages that are still open, oldest first.
+
+        Returns:
+            list[Page]: The context's pages, or just the active one when this
+            session has no context to ask.
+        """
+        if self._context is None:
+            return [self._active]
+        return [page for page in self._context.pages if not page.is_closed()]
+
+    def _record(self, kind: str, detail: str, *, url: str = "") -> None:
+        """Add one event to the list the next action will carry.
+
+        Args:
+            kind: One of :data:`BROWSER_EVENTS`.
+            detail: The sentence for whoever reads the trace.
+            url: The page the event concerns, if any.
+        """
+        self._events.append(BrowserEvent(kind=kind, detail=detail, url=url))
+
+
+def _url_of(page: Page) -> str:
+    """Read a page's address without letting the read raise.
+
+    Event handlers run at awkward moments -- a tab may be closing as it is
+    being asked about -- and an exception from a handler would surface far from
+    here, as a failed action with nothing to do with the action.
+
+    Args:
+        page: The page to ask.
+
+    Returns:
+        str: Its address, or an empty string if it cannot be read.
+    """
+    with suppress(BrowserFailure):
+        return page.url
+    return ""
+
+
 class BrowserProcess:
     """One running browser, handing out one fresh context per task.
 
@@ -116,8 +405,8 @@ class BrowserProcess:
 
         with BrowserProcess(settings) as browser:
             for task in tasks:
-                with browser.task_page() as page:
-                    run(task, page)
+                with browser.task_session() as session:
+                    run(task, session)
 
     Not thread-safe, and not meant to be: Playwright's synchronous API belongs
     to the thread that started it. Parallel benchmark workers each run their
@@ -202,7 +491,7 @@ class BrowserProcess:
                 self._playwright = None
 
     @contextmanager
-    def task_page(self) -> Iterator[Page]:
+    def task_session(self) -> Iterator[TaskSession]:
         """Open one task's browser context, and close it when the task ends.
 
         The context is the isolation boundary, so this is the guarantee that
@@ -211,9 +500,15 @@ class BrowserProcess:
         task's start URL is the controller's first step, not this method's, so
         that step 0 is recorded like any other.
 
+        A session rather than a page, because a task may end up with more than
+        one: the session is what knows which of them the agent is looking at,
+        and it is watching for tabs, dialogs and downloads from this moment
+        rather than from the first action.
+
         Yields:
-            Page: A blank page, sized to the configured viewport, with the
-            configured action timeout already applied as its default.
+            TaskSession: The task's pages, watched. Its ``page`` is blank,
+            sized to the configured viewport, with the configured action
+            timeout already applied as its default.
 
         Raises:
             BrowserError: If the process is not running.
@@ -229,7 +524,7 @@ class BrowserProcess:
         # run for longer than the configured ceiling.
         context.set_default_timeout(self.settings.action_timeout_ms)
         try:
-            yield context.new_page()
+            yield TaskSession(context.new_page(), context=context)
         finally:
             # Closing the context closes every page in it, including any tab a
             # click opened. Nothing about the task survives this line.

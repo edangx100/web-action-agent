@@ -29,6 +29,7 @@ action turns into, and what a result reads like in a log.
 from contextlib import contextmanager
 
 import pytest
+from browser_steps import act, element_id_named, observe
 from playwright.sync_api import Error as BrowserFailure
 from playwright.sync_api import TimeoutError as BrowserTimeout
 
@@ -51,73 +52,10 @@ from web_action_agent.executor import (
     classify_error,
     describe_error,
 )
-from web_action_agent.observation import Observation
-from web_action_agent.observer import ELEMENT_MARK, extract_elements
+from web_action_agent.observer import ELEMENT_MARK
 
 VIEWPORT_HEIGHT = 800
 """int: The height the conftest viewport uses, repeated for the scroll maths."""
-
-
-def observe(page):
-    """Look at the page the way the agent does, marks and all.
-
-    Extraction is what writes the marks the executor acts through, so calling
-    this before executing is not test scaffolding -- it is the same order the
-    real loop runs in, and skipping it would leave nothing for a click to find.
-
-    Args:
-        page: The live page.
-
-    Returns:
-        Observation: The elements and the address. The text channel is left
-        empty; nothing in this module reads it.
-    """
-    return Observation(
-        url=page.url,
-        title=page.title(),
-        elements=extract_elements(page),
-        text="",
-    )
-
-
-def element_id_named(observation, name):
-    """Find the number the observation gave to the element with a given name.
-
-    Args:
-        observation: The observation to look in.
-        name: The element's accessible name.
-
-    Returns:
-        int: Its number.
-
-    Raises:
-        AssertionError: If the page offers no such element, which would make
-            the rest of the test assert nothing.
-    """
-    for element in observation.elements:
-        if element.name == name:
-            return element.id
-    raise AssertionError(f"no element named {name!r} in {[e.name for e in observation.elements]}")
-
-
-def act(page, proposal, *, observation=None, **kwargs):
-    """Execute one proposed action against a page.
-
-    Args:
-        page: The live page.
-        proposal: The action as plain data, parsed here so that every test
-            names its action in the same shape the planner emits.
-        observation: The observation to plan against. Taken fresh when not
-            given; passed explicitly by tests that change the page in between.
-        **kwargs: Passed to :class:`Executor`, for the tests that need a short
-            timeout.
-
-    Returns:
-        ExecutionResult: What the browser did.
-    """
-    if observation is None:
-        observation = observe(page)
-    return Executor(page, **kwargs).execute(parse_action(proposal), observation=observation)
 
 
 # --- The marks the executor acts through ------------------------------------
@@ -436,13 +374,15 @@ def test_two_tasks_in_one_process_do_not_share_cookies(browser_process, fixture_
     dismissed, searches remembered -- and report the result as though the agent
     had earned it.
     """
-    with browser_process.task_page() as first:
+    with browser_process.task_session() as session:
+        first = session.page
         first.goto(fixture_site.url_for("index.html"))
         first.evaluate("document.cookie = 'waa_seen=yes; path=/'")
         first.evaluate("window.localStorage.setItem('waa_seen', 'yes')")
         assert "waa_seen=yes" in first.evaluate("document.cookie")
 
-    with browser_process.task_page() as second:
+    with browser_process.task_session() as session:
+        second = session.page
         second.goto(fixture_site.url_for("index.html"))
         assert second.evaluate("document.cookie") == ""
         assert second.evaluate("window.localStorage.getItem('waa_seen')") is None
@@ -451,13 +391,13 @@ def test_two_tasks_in_one_process_do_not_share_cookies(browser_process, fixture_
 @pytest.mark.fixture
 def test_one_browser_process_serves_every_task(browser_process):
     """Fresh context per task, same browser throughout: the two lifetimes."""
-    with browser_process.task_page() as first:
-        first_context = first.context
-        process = first.context.browser
+    with browser_process.task_session() as session:
+        first_context = session.page.context
+        process = first_context.browser
 
-    with browser_process.task_page() as second:
-        assert second.context is not first_context, "each task needs its own context"
-        assert second.context.browser is process, "the process is shared, not relaunched"
+    with browser_process.task_session() as session:
+        assert session.page.context is not first_context, "each task needs its own context"
+        assert session.page.context.browser is process, "the process is shared, not relaunched"
 
 
 @pytest.mark.fixture
@@ -466,9 +406,9 @@ def test_the_task_context_uses_the_configured_viewport(playwright):
     settings = BrowserSettings(viewport_width=1024, viewport_height=768)
     with (
         BrowserProcess(settings, playwright=playwright) as browser,
-        browser.task_page() as page,
+        browser.task_session() as session,
     ):
-        assert page.viewport_size == {"width": 1024, "height": 768}
+        assert session.page.viewport_size == {"width": 1024, "height": 768}
 
 
 @pytest.mark.fixture
@@ -501,7 +441,7 @@ def test_a_page_cannot_be_taken_from_a_browser_that_is_not_running():
     """Asking a stopped process for a page is a bug, and says so."""
     browser = BrowserProcess()
 
-    with pytest.raises(BrowserError, match="not running"), browser.task_page():
+    with pytest.raises(BrowserError, match="not running"), browser.task_session():
         pass
 
 

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Export the ledger — Northgate Public Library</title>
+  <link rel="stylesheet" href="static/site.css">
+</head>
+<body data-page="download">
+  <!-- Exercises a click that starts a file download instead of showing a page.
+       Files are out of scope for this agent, so the right behaviour is to note
+       what was offered and carry on -- not to save it, and certainly not to
+       stop. The file is built in the browser so that no server support and no
+       committed binary is needed. -->
+  <header class="site">
+    <div class="wordmark">Northgate Public Library</div>
+    <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="search.html">Search the catalogue</a>
+      <a href="browse.html">Browse the catalogue</a>
+      <a href="form-step-1.html">Join the library</a>
+      <a href="article.html">Reading room news</a>
+      <a href="consent.html">Member notices</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1 id="download-heading">Export the ledger</h1>
+    <p class="lede" id="download-status">Three bundles are ready to export.</p>
+
+    <p>
+      <button type="button" id="download-button">Download ledger-extract.csv</button>
+      — offers a file rather than opening a page.
+    </p>
+  </main>
+
+  <script src="static/download.js"></script>
+</body>
+</html>

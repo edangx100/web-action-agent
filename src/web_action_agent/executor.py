@@ -44,6 +44,14 @@ module acts through that mark. If the marked node is gone, the mark is gone
 with it, and the step is reported as :data:`ELEMENT_DETACHED` instead of
 succeeding at the wrong thing.
 
+**The page can move underneath a step.** A click may open a second tab, and
+from that moment the agent is looking at a different page. So this module never
+holds a page of its own -- it asks the task's session which page is active
+every time, and the session is what adopts a new tab, dismisses the browser's
+own dialogs, and declines downloads. Whatever it did during a step comes back
+attached to that step's result, so a click that "did nothing" and a click that
+opened a tab and a dialog are distinguishable in the trace.
+
 **What is deliberately not here.** Whether the action was allowed is the
 validator's business and has already been settled -- this module does not
 re-check the allowlist, and reading it as a second gate would be a mistake.
@@ -55,6 +63,7 @@ command, and the next observation shows what it did to the page.
 from __future__ import annotations
 
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,7 +72,7 @@ from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as BrowserTimeout
 
 from .actions import Action, Click, Done, Fill, Navigate, Press, Scroll, UseSkill
-from .browser import ACTION_TIMEOUT_S
+from .browser import ACTION_TIMEOUT_S, BrowserEvent, TaskSession
 from .observation import Observation
 from .observer import ELEMENT_MARK
 
@@ -131,6 +140,23 @@ FALLBACK_VIEWPORT_HEIGHT = 800
 #: finish would be the same bug in a smaller form. Nothing having begun is the
 #: ordinary outcome, so this is what most key presses cost.
 NAVIGATION_GRACE_S = 1.0
+
+#: How long to wait between asking whether a click's new tab has been
+#: reported yet, in milliseconds. Each ask is a round trip to the browser,
+#: which is also what lets the browser deliver news it is already holding.
+TAB_POLL_MS = 10.0
+
+#: How long any click waits to hear that it opened a tab, in seconds. A script
+#: can open one without saying so beforehand, and a tab noticed a step late
+#: means a step planned against the page the site had already finished with.
+#:
+#: Short, because the wait ends the moment the tab is reported -- a few tens of
+#: milliseconds in practice, since this is a round trip to the browser rather
+#: than anything on the network -- and the grace is paid in full only by clicks
+#: that open nothing, which is most of them. Missing one is survivable rather
+#: than fatal: the tab is adopted whenever the browser gets round to mentioning
+#: it, and the event still reaches the trace.
+TAB_GRACE_S = 0.1
 
 #: How long to wait, after a click or a key press, for any navigation it
 #: started to finish, in seconds. Shorter than the action timeout because this
@@ -211,6 +237,10 @@ class ExecutionResult:
         elapsed_s: How long the attempt took, in seconds. The timeout budget is
             spent here, so this is where a run that is slow rather than broken
             shows itself.
+        events: Anything the browser did during this step that the action did
+            not ask for -- a tab opened, a dialog dismissed, a download
+            declined. Usually empty. When it is not, it is often the whole
+            explanation for what the next observation shows.
     """
 
     action: Action
@@ -218,6 +248,7 @@ class ExecutionResult:
     detail: str = ""
     url: str = ""
     elapsed_s: float = 0.0
+    events: tuple[BrowserEvent, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -235,7 +266,10 @@ class ExecutionResult:
         line = f"{self.action.describe()} -> {self.status}"
         if self.detail:
             line += f": {self.detail}"
-        return f"{line} ({self.elapsed_s:.2f}s)"
+        line = f"{line} ({self.elapsed_s:.2f}s)"
+        if self.events:
+            line += " | " + "; ".join(event.summary() for event in self.events)
+        return line
 
     def to_dict(self) -> dict[str, Any]:
         """Render this result as plain data, for the run's trace.
@@ -251,34 +285,41 @@ class ExecutionResult:
             "detail": self.detail,
             "url": self.url,
             "elapsed_s": round(self.elapsed_s, 3),
+            "events": [event.to_dict() for event in self.events],
         }
 
 
 class Executor:
     """Carries out validated actions on one page, and reports what happened.
 
-    One executor belongs to one task, because one page belongs to one task.
+    One executor belongs to one task, because one session belongs to one task.
     Nothing is remembered between calls: each action is performed against the
     page as it is at that moment, which is the only state that matters and the
     only state that can be trusted.
 
     Attributes:
-        page: The page this executor acts on.
+        page: The page the agent is looking at now, asked of the session on
+            every use rather than kept, because a tab opening changes it.
     """
 
     def __init__(
         self,
-        page: Page,
+        target: TaskSession | Page,
         *,
         action_timeout_s: float = ACTION_TIMEOUT_S,
         settle_timeout_s: float = SETTLE_TIMEOUT_S,
         navigation_grace_s: float = NAVIGATION_GRACE_S,
+        tab_grace_s: float = TAB_GRACE_S,
     ) -> None:
         """Bind an executor to a page.
 
         Args:
-            page: The task's page, from
-                :meth:`~web_action_agent.browser.BrowserProcess.task_page`.
+            target: The task's session, from
+                :meth:`~web_action_agent.browser.BrowserProcess.task_session`.
+                A bare page is accepted too, for a script or a test, and is
+                wrapped in a session that watches nothing -- so a tab that
+                opens is not followed and a dialog is left to the browser's own
+                default. A real run passes the session.
             action_timeout_s: Ceiling on any one browser operation. The task's
                 context sets the same value as its default; passing it
                 explicitly on every call as well means a page handed in from
@@ -286,12 +327,27 @@ class Executor:
             settle_timeout_s: How long to wait for a navigation started by a
                 click or a key press to finish. See :data:`SETTLE_TIMEOUT_S`.
             navigation_grace_s: How long to give a key press to start a
-                navigation. See :data:`NAVIGATION_GRACE_S`.
+                navigation, and a click that declares it opens a tab to produce
+                one. See :data:`NAVIGATION_GRACE_S`.
+            tab_grace_s: How long any other click waits to hear that it opened
+                a tab. See :data:`TAB_GRACE_S`.
         """
-        self.page = page
+        self._session = target if isinstance(target, TaskSession) else TaskSession(target)
         self._action_timeout_ms = action_timeout_s * 1000
         self._settle_timeout_ms = settle_timeout_s * 1000
         self._navigation_grace_ms = navigation_grace_s * 1000
+        self._tab_grace_ms = tab_grace_s * 1000
+
+    @property
+    def page(self) -> Page:
+        """Page: The page the agent is looking at now.
+
+        Read from the session on every use. Keeping a page here instead would
+        mean that a click which opened a tab left this executor acting on the
+        page the site had finished with -- which looks, from the outside, like
+        an agent whose every subsequent step does nothing.
+        """
+        return self._session.page
 
     def execute(
         self,
@@ -318,7 +374,8 @@ class Executor:
 
         Returns:
             ExecutionResult: The status, a sentence where something went wrong,
-            the page's address afterwards, and how long it took.
+            the page's address afterwards, how long it took, and anything the
+            browser did along the way that nobody asked for.
         """
         started = time.monotonic()
         try:
@@ -331,6 +388,10 @@ class Executor:
             detail=detail,
             url=self._current_url(),
             elapsed_s=time.monotonic() - started,
+            # Drained rather than read, so each step carries its own events and
+            # no step inherits the last one's. Anything that happened between
+            # two actions arrives with the later of them.
+            events=self._session.drain_events(),
         )
 
     def _perform(
@@ -379,7 +440,15 @@ class Executor:
         element = self._element(action.element_id)
         if element is None:
             return ELEMENT_DETACHED, _gone_detail(action.element_id, observation)
+
+        # Asked before the click, because afterwards the element may be gone
+        # with the page that carried it.
+        declared = _opens_a_new_tab(element)
+        before = self.page
         element.click(timeout=self._action_timeout_ms)
+        # A link that says it opens a tab is worth waiting properly for; every
+        # other click gets a moment, because a script can open one silently.
+        self._wait_for_tab(before, self._navigation_grace_ms if declared else self._tab_grace_ms)
         self._settle()
         return OK, ""
 
@@ -503,6 +572,31 @@ class Executor:
         # acting on the first match is both harmless and what was meant.
         return marked.first
 
+    def _wait_for_tab(self, before: Page, grace_ms: float) -> None:
+        """Wait, briefly, to hear that the click opened a tab.
+
+        A click that opens one returns before the browser has said so -- a few
+        tens of milliseconds before, in practice. Without this wait the step
+        would end, and the next observation be taken, on the page the site had
+        already finished with: to the agent that reads as a click that did
+        nothing, which is the most expensive thing a step can look like.
+
+        The wait ends the instant the session adopts the tab, so a click that
+        opens one is barely slowed. A click that opens nothing waits out the
+        grace, which is why the caller passes a short one unless the element
+        said in its markup that a tab was coming.
+
+        Args:
+            before: The page that was active when the click was made.
+            grace_ms: How long to wait at most, in milliseconds.
+        """
+        deadline = time.monotonic() + grace_ms / 1000
+        while self.page is before and time.monotonic() < deadline:
+            # A short no-op wait in the browser. The point is not the pause but
+            # the round trip: it is where a message the browser has already
+            # sent -- "a tab opened" -- gets delivered and handled.
+            before.wait_for_timeout(TAB_POLL_MS)
+
     def _settle(self) -> None:
         """Wait for any navigation the last action started to finish.
 
@@ -534,6 +628,29 @@ class Executor:
             return self.page.url
         except BrowserFailure:
             return ""
+
+
+def _opens_a_new_tab(element: Locator) -> bool:
+    """Say whether an element declares that it opens somewhere else.
+
+    Only the markup case is knowable in advance: ``target="_blank"`` on a link
+    or a form. A script that opens a tab says nothing beforehand -- but the tab
+    it opens exists before the click returns, so nothing needs to be waited for
+    in that case.
+
+    Args:
+        element: The element about to be clicked.
+
+    Returns:
+        bool: True if clicking it is declared to open a new tab or window.
+    """
+    with suppress(BrowserFailure):
+        target = element.get_attribute("target")
+        # `_self` is the default spelled out; an empty target is the same as
+        # none at all. Anything else -- `_blank`, or a window name -- means the
+        # result is meant to arrive somewhere other than this tab.
+        return target is not None and target not in ("", "_self")
+    return False
 
 
 def _gone_detail(element_id: int, observation: Observation | None) -> str:

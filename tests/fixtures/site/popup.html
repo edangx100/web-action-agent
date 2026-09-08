@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Noticeboard — Northgate Public Library</title>
+  <link rel="stylesheet" href="static/site.css">
+</head>
+<body data-page="popup">
+  <!-- Exercises the second tab. Real sites open one constantly -- a result
+       link, a "read more", a print view -- and an agent that keeps looking at
+       the tab it left behind sees a page that never changes and concludes it
+       is stuck. Both ways of opening one are here: the plain markup version,
+       and the scripted version, because they arrive by different routes. -->
+  <header class="site">
+    <div class="wordmark">Northgate Public Library</div>
+    <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="search.html">Search the catalogue</a>
+      <a href="browse.html">Browse the catalogue</a>
+      <a href="form-step-1.html">Join the library</a>
+      <a href="article.html">Reading room news</a>
+      <a href="consent.html">Member notices</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1 id="popup-heading">Noticeboard</h1>
+    <p class="lede">Two of these open in a second tab, as the noticeboard's older pages always have.</p>
+
+    <ul>
+      <li>
+        <a href="article.html" target="_blank" rel="noopener" id="popup-link">Reading room refurbishment</a>
+        — opens in a new tab by markup alone.
+      </li>
+      <li>
+        <button type="button" id="popup-button">Open the archive ledger</button>
+        — opens in a new tab from a script.
+      </li>
+      <li>
+        <a href="confirm.html" target="_blank" rel="noopener" id="popup-dialog-link">Cancel a reservation</a>
+        — opens in a second tab, and that tab asks a question of its own.
+      </li>
+      <li>
+        <a href="ledger.html" id="same-tab-link">Archive ledger</a>
+        — opens in this tab, for comparison.
+      </li>
+    </ul>
+  </main>
+
+  <script src="static/popup.js"></script>
+</body>
+</html>

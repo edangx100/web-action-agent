@@ -11,7 +11,7 @@ from fixtures.site_server import StaticSite
 from marker_policy import policy_violations, violation_report
 from playwright.sync_api import Page, Playwright, sync_playwright
 
-from web_action_agent.browser import BrowserProcess, BrowserSettings
+from web_action_agent.browser import BrowserProcess, BrowserSettings, TaskSession
 
 VIEWPORT = {"width": 1280, "height": 800}
 """dict[str, int]: The viewport every browser test runs at.
@@ -113,8 +113,8 @@ def browser_process(playwright: Playwright) -> Iterator[BrowserProcess]:
 
 
 @pytest.fixture
-def page(browser_process: BrowserProcess) -> Iterator[Page]:
-    """Open a fresh page, in a fresh browser context, for one test.
+def task_session(browser_process: BrowserProcess) -> Iterator[TaskSession]:
+    """Open a fresh browser context, watched, for one test.
 
     The context is the isolation boundary: its own cookies, its own storage,
     its own history. One per test is the same rule the agent follows for one
@@ -125,7 +125,25 @@ def page(browser_process: BrowserProcess) -> Iterator[Page]:
         browser_process: The session's browser.
 
     Yields:
+        TaskSession: The test's pages, with tabs, dialogs and downloads
+        watched exactly as they are during a run.
+    """
+    with browser_process.task_session() as session:
+        yield session
+
+
+@pytest.fixture
+def page(task_session: TaskSession) -> Page:
+    """The page a test starts on.
+
+    Deliberately the *first* page rather than ``task_session.page``: a test
+    that opens a tab wants to keep talking about the page it started on, while
+    the session moves on to the new one.
+
+    Args:
+        task_session: The test's watched context.
+
+    Returns:
         Page: A blank page sized to :data:`VIEWPORT`.
     """
-    with browser_process.task_page() as page:
-        yield page
+    return task_session.page
