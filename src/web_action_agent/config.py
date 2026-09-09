@@ -259,6 +259,25 @@ class Config(BaseModel):
     # exception that ends the run without a verdict.
     action_timeout_s: float = Field(default=30.0, gt=0.0, description="One browser action.")
     llm_timeout_s: float = Field(default=90.0, gt=0.0, description="One model call.")
+    backoff_attempts: int = Field(
+        default=4,
+        ge=1,
+        description=(
+            "Times one model call may be tried when the endpoint says it is "
+            "busy, the first included. Nothing to do with the validator's "
+            "retry budget, which counts bad answers rather than refusals."
+        ),
+    )
+    backoff_base_s: float = Field(
+        default=1.0,
+        gt=0.0,
+        description="First pause after a refusal; each one after it doubles.",
+    )
+    backoff_max_s: float = Field(
+        default=30.0,
+        gt=0.0,
+        description="Longest single pause, however much the doubling would give.",
+    )
     run_timeout_s: float = Field(
         default=300.0, gt=0.0, description="Wall-clock ceiling for one whole run."
     )

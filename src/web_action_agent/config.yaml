@@ -113,6 +113,21 @@ action_timeout_s: 30.0    # one browser action
 llm_timeout_s: 90.0       # one model call
 run_timeout_s: 300.0      # one whole run, wall clock
 
+# --- When the AI service says you are going too fast -------------------------
+#
+# An endpoint answering "too many requests" is not a broken endpoint, and the
+# designed response is to wait and ask again, waiting longer each time. Bounded,
+# because the point is to end: after the last attempt the call fails with a
+# stated reason, which a results table can hold.
+#
+# This is deliberately not the validator's retry budget. That one counts *bad
+# answers* from the model; this one counts *refusals* from the service, and
+# merging them would make each look like the other.
+
+backoff_attempts: 4       # tries per call, the first included: 4 means 3 waits
+backoff_base_s: 1.0       # first pause; each one after it doubles
+backoff_max_s: 30.0       # longest single pause
+
 # --- Skill library -----------------------------------------------------------
 
 # Skills whose success rate falls below this are retired automatically; this is

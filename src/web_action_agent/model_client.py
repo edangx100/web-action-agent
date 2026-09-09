@@ -50,8 +50,10 @@ from __future__ import annotations
 
 import base64
 import json
+import random
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
@@ -60,7 +62,9 @@ import yaml
 from openai import APITimeoutError, OpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from web_action_agent.actions import Done
 from web_action_agent.config import Config, redact, register_secret, resolve_env
+from web_action_agent.timeouts import LLM_TIMEOUT
 
 #: The committed endpoint descriptions. Packaged next to the module so the file
 #: is found identically from a checkout and from an installed wheel.
@@ -80,6 +84,18 @@ UNUSED_API_KEY = "not-needed"
 DEFAULT_TEMPERATURE = 0.0
 DEFAULT_SEED = 0
 
+#: The status an endpoint sends to say "you are asking too fast".
+TOO_MANY_REQUESTS = 429
+
+#: Why a run ended, when the endpoint kept saying it was too busy.
+RATE_LIMITED = "rate_limited"
+
+#: Why a run ended, when the endpoint kept failing on its own side.
+ENDPOINT_UNAVAILABLE = "endpoint_unavailable"
+
+#: What a model-layer failure is called when it is none of the named kinds.
+MODEL_ERROR = "model_error"
+
 
 class ModelClientError(Exception):
     """Any failure of this module: bad profile, bad key, bad call, bad reply.
@@ -95,6 +111,11 @@ class ModelClientError(Exception):
     holds for errors this module has not grown yet, rather than depending on
     each new ``raise`` site remembering.
     """
+
+    #: Why a run that ends here ended, for the results table. Subclasses that
+    #: mean something more specific say so; everything else is a model-layer
+    #: failure with no finer name, which is honest rather than invented.
+    category = MODEL_ERROR
 
     def __init__(self, message: str) -> None:
         """Build the error with any key value removed from its message.
@@ -115,6 +136,48 @@ class ModelTimeoutError(ModelClientError):
     say so in those words -- "the endpoint was too slow" is a finding an
     evaluation can act on, and "the call failed" is not.
     """
+
+    category = LLM_TIMEOUT
+
+
+class ModelBusyError(ModelClientError):
+    """The endpoint turned every attempt away, and the budget ran out.
+
+    Raised only after the backoff has been spent, so reaching this means the
+    endpoint refused the call, was given a growing pause, and refused again --
+    which is a different situation from a call that failed once. A caller
+    reading this knows waiting has already been tried.
+
+    Attributes:
+        category: :data:`RATE_LIMITED` when the endpoint said "too many
+            requests", :data:`ENDPOINT_UNAVAILABLE` when it said its own side
+            was broken. The behaviour is identical and the finding is not: one
+            says the run asked too fast, the other says the provider was down,
+            and a results table that could not tell them apart would blame the
+            agent for the provider's afternoon.
+        status: The HTTP status of the last refusal.
+        backoffs: Every wait that was spent before giving up. Kept because the
+            time is real and a run's numbers should show it.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int,
+        backoffs: tuple[BackoffEvent, ...] = (),
+    ) -> None:
+        """Build the error.
+
+        Args:
+            message: The diagnostic.
+            status: The HTTP status of the last refusal.
+            backoffs: The waits already spent.
+        """
+        super().__init__(message)
+        self.status = status
+        self.backoffs = backoffs
+        self.category = RATE_LIMITED if status == TOO_MANY_REQUESTS else ENDPOINT_UNAVAILABLE
 
 
 class ProfileError(ModelClientError):
@@ -383,6 +446,207 @@ def resolve_api_key(profile: Profile, env: Mapping[str, str]) -> str:
     )
 
 
+def run_failure(error: ModelClientError) -> Done:
+    """Turn a model-layer failure into the run's terminal outcome.
+
+    Every failure here has a category, so this is the one place that has to
+    know how a model-layer problem becomes a verdict: the category leads, and
+    the sentence follows. A run that ends because the endpoint was busy reads
+    ``done failed: rate_limited: ...``, and an evaluation counting failures by
+    cause can group them without reading any of the prose.
+
+    Args:
+        error: Anything this module raised.
+
+    Returns:
+        Done: ``done(failed, "<category>: <what happened>")``.
+    """
+    return Done(action="done", status="failed", reason=f"{error.category}: {error}")
+
+
+def _status_of(error: Exception) -> int | None:
+    """Read the HTTP status an endpoint refused with, if it said one.
+
+    Read off the exception rather than matched against a library's class
+    hierarchy: every OpenAI-compatible client surfaces the status, and the
+    number is the part that has a fixed meaning. A transport swapped for
+    another one keeps working.
+
+    Args:
+        error: Whatever the transport raised.
+
+    Returns:
+        int | None: The status, or None for a failure with no HTTP answer
+        behind it -- a DNS failure, a refused connection, a bug in this code.
+    """
+    status = getattr(error, "status_code", None)
+    return status if isinstance(status, int) else None
+
+
+def _worth_retrying(status: int) -> bool:
+    """Say whether an endpoint's refusal is one that waiting might fix.
+
+    Args:
+        status: The HTTP status the endpoint refused with.
+
+    Returns:
+        bool: True for "too many requests" and for the server's own errors.
+        False for everything else -- a bad key or a malformed request fails the
+        same way however long you wait, and retrying it wastes a run's time.
+    """
+    return status == TOO_MANY_REQUESTS or 500 <= status < 600
+
+
+def _retry_after_of(error: Exception) -> float | None:
+    """Read the pause an endpoint asked for, when it asked for one.
+
+    Args:
+        error: Whatever the transport raised.
+
+    Returns:
+        float | None: The seconds named in a ``Retry-After`` header, or None
+        when there is none, it is unreadable, or it is in the HTTP-date form
+        this does not parse. Unknown is a safe answer: the doubling applies
+        instead, so the call still waits.
+    """
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    with suppress(AttributeError, TypeError, ValueError):
+        value = headers.get("retry-after")
+        return float(value) if value is not None else None
+    return None
+
+
+@dataclass(frozen=True)
+class BackoffEvent:
+    """One refusal, and the pause taken before trying again.
+
+    Recorded rather than merely logged. Waiting is time a run spends and a
+    reader of the trace cannot otherwise see: a task that took four minutes
+    because the endpoint was busy looks, without these, exactly like a task
+    that took four minutes because the agent was floundering.
+
+    Attributes:
+        attempt: Which attempt was refused, counting the first as 1.
+        status: The HTTP status the endpoint refused with.
+        waited_s: How long was spent waiting before the next attempt.
+        asked_s: What the endpoint itself asked for, in seconds, when it said
+            so in a ``Retry-After`` header. None when it did not.
+    """
+
+    attempt: int
+    status: int
+    waited_s: float
+    asked_s: float | None = None
+
+    def summary(self) -> str:
+        """Render this pause as the fragment a call log records.
+
+        Returns:
+            str: e.g. ``attempt 1 refused with 429, waited 1.0s``.
+        """
+        line = f"attempt {self.attempt} refused with {self.status}, waited {self.waited_s:.1f}s"
+        return f"{line} (asked for {self.asked_s:.1f}s)" if self.asked_s is not None else line
+
+    def to_dict(self) -> dict[str, Any]:
+        """Render this pause as plain data, for the run's trace.
+
+        Returns:
+            dict[str, Any]: JSON-safe values.
+        """
+        return {
+            "attempt": self.attempt,
+            "status": self.status,
+            "waited_s": round(self.waited_s, 3),
+            "asked_s": self.asked_s,
+        }
+
+
+@dataclass(frozen=True)
+class Backoff:
+    """How long to wait after a refusal, and how many refusals to take.
+
+    Deliberately separate from the validator's retry budget, which counts
+    something else entirely. That one means *the model proposed nonsense*; this
+    one means *the service is busy*. Merging them would hide both: a run out of
+    validation retries would look rate-limited, and a rate-limited run would
+    look like a model that cannot follow a schema.
+
+    **Exponential, because a fixed pause is the wrong shape.** Too short and
+    every retry lands while the endpoint is still refusing; too long and a
+    one-second hiccup costs a minute. Doubling starts small and gets out of the
+    way quickly.
+
+    **Bounded, because the point is to end.** After the last attempt the call
+    fails with a stated reason, which a results table can hold, rather than
+    retrying into an evaluation that never finishes.
+
+    Attributes:
+        attempts: How many times one call may be *tried*, the first included.
+            Four attempts means three waits.
+        base_s: The first pause. Each one after it doubles.
+        max_s: The longest single pause, however much doubling would give.
+        jitter: How much randomness to add to a pause, as a fraction of it.
+            Four workers refused at the same instant would otherwise retry in
+            lockstep and be refused together again -- so each waits its own
+            pause plus up to this much more. It only ever adds, so a pause the
+            endpoint asked for is never shortened.
+    """
+
+    attempts: int = 4
+    base_s: float = 1.0
+    max_s: float = 30.0
+    jitter: float = 0.25
+
+    @classmethod
+    def from_config(cls, config: Config) -> Backoff:
+        """Take the backoff settings out of a run's configuration.
+
+        Args:
+            config: The resolved configuration for this run.
+
+        Returns:
+            Backoff: The policy for this run.
+        """
+        return cls(
+            attempts=config.backoff_attempts,
+            base_s=config.backoff_base_s,
+            max_s=config.backoff_max_s,
+        )
+
+    def wait_after(
+        self,
+        attempt: int,
+        *,
+        asked_s: float | None = None,
+        spread: float = 0.0,
+    ) -> float:
+        """Say how long to wait after one refusal.
+
+        Args:
+            attempt: Which attempt was refused, counting the first as 1.
+            asked_s: What the endpoint asked for in a ``Retry-After`` header,
+                when it said. An endpoint asking for longer than the doubling
+                would give is obeyed -- it knows when it will be ready and this
+                does not. One asking for less is not, because the pause is also
+                this project's own floor.
+            spread: A number in ``[0, 1)`` deciding how much of the jitter to
+                add. Passed in rather than drawn here so that a test can ask
+                for exactly no jitter, or exactly all of it.
+
+        Returns:
+            float: Seconds to wait, never more than :attr:`max_s`.
+        """
+        doubling = self.base_s * (2 ** (attempt - 1))
+        wait = max(doubling, asked_s) if asked_s is not None else doubling
+        # Capped before the jitter as well as after, so that a very long
+        # `Retry-After` cannot be turned into a longer one still.
+        wait = min(wait, self.max_s)
+        return min(wait + wait * self.jitter * spread, self.max_s)
+
+
 @dataclass(frozen=True)
 class CallRecord:
     """What one model call cost, written to the run's trace.
@@ -398,7 +662,9 @@ class CallRecord:
         vision: Whether an image was part of the request.
         prompt_tokens: Input tokens billed, or None if the endpoint reports none.
         completion_tokens: Output tokens billed, or None if not reported.
-        latency_s: Wall-clock seconds for the call. The only cost measure a
+        latency_s: Wall-clock seconds for the attempt that worked -- the time
+            the endpoint spent thinking, with any waiting to be let in kept out
+            of it and reported as ``waited_s``. The only cost measure a
             self-hosted endpoint has, which is why it is always recorded.
         finish_reason: Why generation stopped; ``"length"`` here explains a
             truncated action better than the parse failure it causes.
@@ -411,6 +677,10 @@ class CallRecord:
             honour one", which is what makes the field worth recording: a run
             with a high rate of unparseable replies is explained by these being
             False, and that is a routing problem rather than a model one.
+        backoffs: Refusals this call survived before it went through, each with
+            the pause it cost. Almost always empty. When it is not, it is the
+            difference between "this call was slow" and "this endpoint made us
+            queue", which ``latency_s`` alone cannot show.
     """
 
     profile: str
@@ -422,6 +692,18 @@ class CallRecord:
     finish_reason: str | None
     cost_usd: float | None = None
     schema_enforced: bool = False
+    backoffs: tuple[BackoffEvent, ...] = ()
+
+    @property
+    def waited_s(self) -> float:
+        """float: Seconds spent waiting to be let in, apart from the call itself.
+
+        Kept separate from :attr:`latency_s`, which times the attempt that
+        worked. A run whose wall clock is mostly this was throttled; a run
+        whose wall clock is mostly latency has a slow model. The fixes are
+        different, so the numbers are too.
+        """
+        return sum(event.waited_s for event in self.backoffs)
 
     @property
     def total_tokens(self) -> int | None:
@@ -565,6 +847,9 @@ class ModelClient:
         *,
         api_key: str | None = None,
         timeout_s: float = 90.0,
+        backoff: Backoff | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+        spread: Callable[[], float] = random.random,
         env: Mapping[str, str] | None = None,
         transport: Any | None = None,
     ) -> None:
@@ -574,6 +859,13 @@ class ModelClient:
             profile: The endpoint to call.
             api_key: The key, if already resolved. Normally left to be read
                 from ``env``.
+            backoff: What to do when the endpoint says it is too busy.
+                Defaults to the documented policy.
+            sleep: How to wait between attempts. Injected so that a test of the
+                backoff does not actually take the backoff.
+            spread: Where the jitter comes from -- a callable returning a
+                number in ``[0, 1)``. Injected for the same reason: a test that
+                wants to assert an exact pause can hand over a constant.
             timeout_s: Ceiling on one call. Expiry is a categorized failure the
                 run reports, not an exception that ends it without a verdict.
             env: Environment to read the key from. Defaults to ``.env``
@@ -587,6 +879,9 @@ class ModelClient:
         """
         self.profile = profile
         self.timeout_s = timeout_s
+        self.backoff = backoff or Backoff()
+        self._sleep = sleep
+        self._spread = spread
         # Screenshots discarded by observation_message for want of a vision
         # route. Expected to stay at zero; see the property for why it is
         # counted rather than raised on.
@@ -632,6 +927,7 @@ class ModelClient:
         return cls(
             resolve_profile(config, path=profiles_path),
             timeout_s=config.llm_timeout_s,
+            backoff=Backoff.from_config(config),
             env=env,
             transport=transport,
         )
@@ -775,26 +1071,8 @@ class ModelClient:
         if timeout_s is not None:
             request["timeout"] = timeout_s
 
-        started = time.perf_counter()
         ceiling = timeout_s if timeout_s is not None else self.timeout_s
-        try:
-            completion = self._transport.chat.completions.create(**request)
-        except APITimeoutError as error:
-            # Named before the general case below, because it arrives as one of
-            # the same provider-specific exceptions and would otherwise be
-            # reported as "the call failed" -- which sends whoever reads the
-            # trace looking at keys and networks rather than at the clock.
-            raise ModelTimeoutError(
-                f"call to {self.profile.name} ({route.model}) got no answer within {ceiling:.0f}s"
-            ) from error
-        except Exception as error:
-            # Everything from DNS failure to HTTP 429 arrives here as some
-            # provider-specific type. Callers care that the model layer failed
-            # and why in words; the retry policy reads the message.
-            raise ModelClientError(
-                f"call to {self.profile.name} ({route.model}) failed: {error}"
-            ) from error
-        latency_s = time.perf_counter() - started
+        completion, latency_s, backoffs = self._call_with_backoff(request, route, ceiling)
 
         text, finish_reason = self._read_choice(completion)
         record = CallRecord(
@@ -806,6 +1084,7 @@ class ModelClient:
             latency_s=latency_s,
             finish_reason=finish_reason,
             schema_enforced=constrained,
+            backoffs=backoffs,
         )
         if schema is None:
             return ModelResponse(text=text, data=None, record=record)
@@ -817,6 +1096,90 @@ class ModelClient:
             # the cost attached.
             raise ModelResponseError(str(error), text=error.text, record=record) from error
         return ModelResponse(text=text, data=data, record=record)
+
+    def _call_with_backoff(
+        self,
+        request: dict[str, Any],
+        route: Route,
+        ceiling: float,
+    ) -> tuple[Any, float, tuple[BackoffEvent, ...]]:
+        """Make the call, waiting and trying again while the endpoint is busy.
+
+        Only two answers are worth waiting for: "too many requests" and "my
+        side is broken". Everything else -- a bad key, a malformed request, an
+        image sent to a route with no vision model -- fails identically on the
+        second attempt as on the first, so retrying it would spend a run's time
+        buying nothing.
+
+        Args:
+            request: The call body, already built.
+            route: The route being called, for the error messages.
+            ceiling: The per-call timeout in force, for the error message.
+
+        Returns:
+            tuple[Any, float, tuple[BackoffEvent, ...]]: The completion, how
+            long the attempt that worked took, and every pause spent getting
+            there.
+
+        Raises:
+            ModelTimeoutError: If the endpoint took a request and did not
+                answer in time. Not retried: the wait already happened.
+            ModelBusyError: If the endpoint refused every attempt and the
+                budget ran out.
+            ModelClientError: For any other failure, on the first attempt.
+        """
+        backoffs: list[BackoffEvent] = []
+        for attempt in range(1, self.backoff.attempts + 1):
+            started = time.perf_counter()
+            try:
+                completion = self._transport.chat.completions.create(**request)
+            except APITimeoutError as error:
+                # Named before the general case below, because it arrives as
+                # one of the same provider-specific exceptions and would
+                # otherwise be reported as "the call failed" -- which sends
+                # whoever reads the trace looking at keys and networks rather
+                # than at the clock. Not retried, either: the ceiling has just
+                # been spent waiting, and this is the report of that.
+                raise ModelTimeoutError(
+                    f"call to {self.profile.name} ({route.model}) got no answer "
+                    f"within {ceiling:.0f}s"
+                ) from error
+            except Exception as error:
+                status = _status_of(error)
+                if status is None or not _worth_retrying(status):
+                    # Everything from DNS failure to a malformed request
+                    # arrives here as some provider-specific type. Callers care
+                    # that the model layer failed and why in words.
+                    raise ModelClientError(
+                        f"call to {self.profile.name} ({route.model}) failed: {error}"
+                    ) from error
+                if attempt == self.backoff.attempts:
+                    raise ModelBusyError(
+                        f"{self.profile.name} ({route.model}) refused {attempt} attempts "
+                        f"with {status}; gave up after "
+                        f"{sum(event.waited_s for event in backoffs):.1f}s of waiting",
+                        status=status,
+                        backoffs=tuple(backoffs),
+                    ) from error
+
+                asked_s = _retry_after_of(error)
+                waited = self.backoff.wait_after(attempt, asked_s=asked_s, spread=self._spread())
+                backoffs.append(
+                    BackoffEvent(
+                        attempt=attempt,
+                        status=status,
+                        waited_s=waited,
+                        asked_s=asked_s,
+                    )
+                )
+                self._sleep(waited)
+                continue
+            return completion, time.perf_counter() - started, tuple(backoffs)
+
+        # Unreachable: the loop either returns, or raises on its last attempt.
+        # Written out anyway because a `for` that falls through silently is how
+        # a future edit to the bounds turns into a call that returns None.
+        raise ModelClientError(f"call to {self.profile.name} ({route.model}) was never attempted")
 
     @staticmethod
     def _routing_body(route: Route) -> dict[str, Any]:
