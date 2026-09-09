@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live shelf display — Northgate Public Library</title>
+  <link rel="stylesheet" href="static/site.css">
+  <style>
+    /* A control that never stops moving. Nothing here is a trick: a carousel,
+       a ticker, and a "live" counter all do exactly this, and a page whose
+       button is still sliding into place is the ordinary reason a click waits.
+       Browser automation refuses to click a moving target -- it would land
+       somewhere unintended -- so it waits for the movement to stop, and here
+       it never does. That is the whole fixture. */
+    @keyframes drift {
+      from { transform: translateX(0); }
+      to   { transform: translateX(160px); }
+    }
+    #drifting-button {
+      animation: drift 1.4s linear infinite alternate;
+    }
+  </style>
+</head>
+<body data-page="hang">
+  <!-- Exercises the action timeout: a page that is perfectly healthy, fully
+       loaded, and offers something the agent can never actually click. The
+       point is that the step ends with a stated reason instead of hanging. -->
+  <header class="site">
+    <div class="wordmark">Northgate Public Library</div>
+    <nav class="site">
+      <a href="index.html">Home</a>
+      <a href="search.html">Search the catalogue</a>
+      <a href="browse.html">Browse the catalogue</a>
+      <a href="form-step-1.html">Join the library</a>
+      <a href="article.html">Reading room news</a>
+      <a href="consent.html">Member notices</a>
+    </nav>
+  </header>
+
+  <main>
+    <h1 id="hang-heading">Live shelf display</h1>
+    <p class="lede">The returns trolley moves along the shelf. Catch it if you can.</p>
+
+    <p>
+      <button type="button" id="drifting-button">Reserve from trolley</button>
+    </p>
+    <p>
+      <a href="index.html" id="steady-link">Back to the home page</a>
+      — an ordinary control on the same page, for comparison.
+    </p>
+  </main>
+</body>
+</html>

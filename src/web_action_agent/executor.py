@@ -52,6 +52,13 @@ own dialogs, and declines downloads. Whatever it did during a step comes back
 attached to that step's result, so a click that "did nothing" and a click that
 opened a tab and a dialog are distinguishable in the trace.
 
+**One ceiling for the whole step.** The action timeout is a promise about the
+step, not about one call inside it: the waits that follow a click -- for the
+page to settle, for a tab that may be opening -- draw from the same budget, so
+a thirty-second ceiling cannot quietly become thirty-six. The politeness wait
+is the one exception, and deliberately: time spent *not* asking a server for
+something is not the step taking too long. The run's own ceiling covers that.
+
 **Waiting before knocking.** A navigation is the one action that asks a
 stranger's server for something, so it is the one action that waits: the
 run's throttle keeps a minimum gap between visits to a site, across every
@@ -352,6 +359,7 @@ class Executor:
                 pointed at a real site.
         """
         self._session = target if isinstance(target, TaskSession) else TaskSession(target)
+        self._action_timeout_s = action_timeout_s
         self._action_timeout_ms = action_timeout_s * 1000
         self._settle_timeout_ms = settle_timeout_s * 1000
         self._navigation_grace_ms = navigation_grace_s * 1000
@@ -360,6 +368,10 @@ class Executor:
         # Set by a navigation that waited, read once by `execute`, and cleared
         # there. A step that did not navigate leaves it at zero.
         self._waited_s = 0.0
+        # When the action in progress must be finished by. Set afresh on every
+        # `execute`, and read by the waits that follow the browser call so that
+        # they cannot push the step past its ceiling.
+        self._deadline = 0.0
 
     @property
     def page(self) -> Page:
@@ -402,6 +414,7 @@ class Executor:
         """
         started = time.monotonic()
         self._waited_s = 0.0
+        self._deadline = started + self._action_timeout_s
         try:
             status, detail = self._perform(action, observation)
         except BrowserFailure as error:
@@ -473,7 +486,8 @@ class Executor:
         element.click(timeout=self._action_timeout_ms)
         # A link that says it opens a tab is worth waiting properly for; every
         # other click gets a moment, because a script can open one silently.
-        self._wait_for_tab(before, self._navigation_grace_ms if declared else self._tab_grace_ms)
+        grace = self._navigation_grace_ms if declared else self._tab_grace_ms
+        self._wait_for_tab(before, self._left_of_the_step(grace))
         self._settle()
         return OK, ""
 
@@ -519,10 +533,17 @@ class Executor:
         Returns:
             tuple[str, str]: The status and its detail sentence.
         """
+        grace = self._left_of_the_step(self._navigation_grace_ms)
+        if grace <= 0:
+            # The step has no time left to watch for a navigation. Pressed
+            # anyway -- the key press is the action, and skipping it would turn
+            # a slow step into a step that never happened. Never passed to the
+            # browser as a zero timeout, which it reads as "wait forever".
+            self.page.keyboard.press(action.key)
+            return OK, ""
+
         try:
-            with self.page.expect_navigation(
-                wait_until="commit", timeout=self._navigation_grace_ms
-            ):
+            with self.page.expect_navigation(wait_until="commit", timeout=grace):
                 self.page.keyboard.press(action.key)
         except BrowserTimeout:
             # The key did not take the page anywhere, which is most keys.
@@ -577,6 +598,10 @@ class Executor:
         """
         if self._throttle is not None:
             self._waited_s = self._throttle.wait(action.url)
+            # Politeness is not the step taking too long, so the step's own
+            # ceiling starts again from the moment the waiting ends. What
+            # bounds a very patient wait is the run's ceiling, not this one.
+            self._deadline += self._waited_s
         self.page.goto(action.url, timeout=self._action_timeout_ms)
         return OK, ""
 
@@ -639,14 +664,38 @@ class Executor:
         never finish loading, and the agent still has to be able to look at
         them.
         """
+        remaining = self._left_of_the_step(self._settle_timeout_ms)
+        if remaining <= 0:
+            # The step has used its whole ceiling already. Waiting further would
+            # break the promise the ceiling makes, and the next observation can
+            # describe a page still loading -- it says so when it does.
+            return
         try:
-            self.page.wait_for_load_state("load", timeout=self._settle_timeout_ms)
+            self.page.wait_for_load_state("load", timeout=remaining)
         except BrowserFailure:
             # Both endings are fine here. A timeout means the page is still
             # loading, and the observation will describe it as it stands; any
             # other complaint belongs to the action that follows, which will
             # report it properly rather than have it surface as a settle.
             pass
+
+    def _left_of_the_step(self, ceiling_ms: float) -> float:
+        """How long a wait after the browser call may take, in milliseconds.
+
+        The smaller of the wait's own ceiling and whatever is left of the
+        step's. This is what makes "thirty seconds per action" true of the
+        whole step rather than of the one call inside it -- a click that spends
+        its entire budget has nothing left to spend on settling afterwards.
+
+        Args:
+            ceiling_ms: The wait's own ceiling, in milliseconds.
+
+        Returns:
+            float: Milliseconds the wait may take. Zero or less means the step
+            is out of time and the wait should be skipped entirely -- never
+            passed to the browser, which reads zero as "wait forever".
+        """
+        return min(ceiling_ms, (self._deadline - time.monotonic()) * 1000)
 
     def _current_url(self) -> str:
         """Read the page's address, without letting the read fail a step.

@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import Any, Self
 
 import yaml
-from openai import OpenAI
+from openai import APITimeoutError, OpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from web_action_agent.config import Config, redact, register_secret, resolve_env
@@ -103,6 +103,18 @@ class ModelClientError(Exception):
             message: The diagnostic, which may quote a provider's response.
         """
         super().__init__(redact(message))
+
+
+class ModelTimeoutError(ModelClientError):
+    """The endpoint took the request and did not answer in time.
+
+    Kept apart from every other call failure because it needs a different
+    response and points at a different problem. A refused connection or a bad
+    key is broken and will stay broken; an endpoint that is merely slow may
+    well answer the next request, and a run that ends because of one should
+    say so in those words -- "the endpoint was too slow" is a finding an
+    evaluation can act on, and "the call failed" is not.
+    """
 
 
 class ProfileError(ModelClientError):
@@ -692,6 +704,7 @@ class ModelClient:
         temperature: float = DEFAULT_TEMPERATURE,
         seed: int | None = DEFAULT_SEED,
         max_tokens: int | None = None,
+        timeout_s: float | None = None,
     ) -> ModelResponse:
         """Make one call and return the reply, parsed, with its cost record.
 
@@ -712,12 +725,20 @@ class ModelClient:
                 evaluation impossible to interpret.
             seed: Seed for endpoints that honour one. None omits it.
             max_tokens: Output ceiling, or None for the endpoint's default.
+            timeout_s: Ceiling on this one call, overriding the client's own.
+                Meant for a caller holding the run's remaining wall clock: a
+                ninety-second call started with ten seconds left in the run
+                would overshoot the run's ceiling by more than a minute, and
+                failing at ten under the right name is better than that.
 
         Returns:
             ModelResponse: The reply text, the parsed object when a schema was
             asked for, and the record of what the call cost.
 
         Raises:
+            ModelTimeoutError: If the endpoint did not answer within the
+                ceiling. A subclass of ``ModelClientError``, so a caller that
+                does not care about the difference still catches it.
             ModelClientError: If the call itself failed — network, auth, rate
                 limit, or an image sent to a profile with no vision route.
             ModelResponseError: If a schema was asked for and the reply is not
@@ -751,10 +772,21 @@ class ModelClient:
         extra_body = self._routing_body(route)
         if extra_body:
             request["extra_body"] = extra_body
+        if timeout_s is not None:
+            request["timeout"] = timeout_s
 
         started = time.perf_counter()
+        ceiling = timeout_s if timeout_s is not None else self.timeout_s
         try:
             completion = self._transport.chat.completions.create(**request)
+        except APITimeoutError as error:
+            # Named before the general case below, because it arrives as one of
+            # the same provider-specific exceptions and would otherwise be
+            # reported as "the call failed" -- which sends whoever reads the
+            # trace looking at keys and networks rather than at the clock.
+            raise ModelTimeoutError(
+                f"call to {self.profile.name} ({route.model}) got no answer within {ceiling:.0f}s"
+            ) from error
         except Exception as error:
             # Everything from DNS failure to HTTP 429 arrives here as some
             # provider-specific type. Callers care that the model layer failed

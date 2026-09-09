@@ -31,6 +31,7 @@ PAGES = [
     ("popup.html", 'id="popup-heading"'),
     ("confirm.html", 'id="dialog-heading"'),
     ("download.html", 'id="download-heading"'),
+    ("hang.html", 'id="hang-heading"'),
 ]
 """list[tuple[str, str]]: Each page, paired with an element only that page has.
 
