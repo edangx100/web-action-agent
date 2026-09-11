@@ -1,0 +1,76 @@
+# What a thousand thousand tokens cost, by profile and by model.
+#
+# Checked in on purpose. A run's dollar figure has to be reproducible by
+# whoever reads the results months later, and a price fetched from a provider's
+# API at run time is a number nobody can check afterwards — the page will have
+# changed. So the prices live here, in the repository, with the date each was
+# last verified, and a published result can name the file it was priced under.
+#
+# --- The rules ---------------------------------------------------------------
+#
+# 1. Prices are US dollars per *million* tokens, which is how providers quote
+#    them. Input and output are priced separately, because they almost always
+#    differ by a factor of three or four.
+#
+# 2. An empty price means UNKNOWN, and unknown is recorded as unknown — never
+#    as zero. Zero is a claim, and a false zero quietly corrupts every total
+#    that includes it: one unpriced model in a benchmark makes the whole
+#    cost-per-task column wrong in the flattering direction.
+#
+# 3. A free route is also left empty. A free tier is a promotional arrangement
+#    with a rate limit, not a price, and writing 0.0 would let a comparison
+#    claim a cost saving that came from somebody's promotion.
+#
+# 4. The key is the profile AND the model. The same open-weight model is served
+#    here by an aggregator, by its vendor, and by a server on your own machine,
+#    at three different prices — and the last of those has no per-token price
+#    at all. A table keyed on the model name alone would bill a self-hosted run
+#    for tokens that cost nothing.
+#
+# --- Before you publish a number ---------------------------------------------
+#
+# Fill in the prices below from each provider's own pricing page and put the
+# date in `checked`. Until then the agent records tokens and wall-clock — which
+# are always true — and reports dollars as unknown, which is also true. A stale
+# price is worse than no price: no price is visibly missing, and a stale one
+# looks like an answer.
+
+openrouter:
+  # Aggregator. Prices vary by the host serving the model, and this project
+  # pins one host per route, so the price to copy here is that host's.
+  nvidia/nemotron-3-nano-30b-a3b:
+    input_usd_per_mtok:
+    output_usd_per_mtok:
+    checked:
+    note: planner and judge text route; price varies by pinned provider
+
+  nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free:
+    input_usd_per_mtok:
+    output_usd_per_mtok:
+    checked:
+    note: free tier — no price to record, and zero would be a claim
+
+nvidia:
+  # First-party endpoint.
+  nvidia/nemotron-3-nano-30b-a3b:
+    input_usd_per_mtok:
+    output_usd_per_mtok:
+    checked:
+    note: first-party text route
+
+  nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:
+    input_usd_per_mtok:
+    output_usd_per_mtok:
+    checked:
+    note: first-party vision route
+
+local:
+  # Self-hosted vLLM on your own hardware. There is no per-token price here at
+  # all: the cost is electricity and the machine, neither of which divides
+  # sensibly by a token. Tokens and wall-clock are the cost measure for this
+  # profile, which is what the spec asks for, and dollars stay unknown.
+  nvidia/nemotron-3-nano-30b-a3b:
+    input_usd_per_mtok:
+    output_usd_per_mtok:
+    checked:
+    note: self-hosted — tokens and wall-clock are the cost measure

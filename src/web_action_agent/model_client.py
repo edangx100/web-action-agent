@@ -39,11 +39,16 @@ nowhere else: the repr shows the profile and model, and every error this
 module raises is scrubbed of key values on its way out, because those errors
 quote provider responses into logs and committed traces.
 
-**What is deliberately not here yet.** Rate-limit backoff and per-call dollar
-costs are separate pieces of work that plug into the seams this module already
-provides: ``max_retries=0`` on the underlying client leaves one owner for retry
-policy rather than two uncoordinated ones, and :class:`CallRecord` carries the
-``cost_usd`` field that the pricing table will fill in.
+**One owner for retry policy.** ``max_retries=0`` on the underlying client is
+deliberate: waiting out a busy endpoint is this module's job, and two retry
+layers stacked would multiply the wait and hide the refusals from the cost log.
+
+**Every call is priced where it is recorded.** The dollars come from the
+checked-in price table, looked up by the profile and the route's resolved model
+-- which is known here and nowhere else, since a vision step does not use the
+model the profile names. A route that is free, self-hosted or unpriced records
+no dollars at all rather than zero; see :mod:`web_action_agent.cost` for why
+that distinction is worth the awkwardness.
 """
 
 from __future__ import annotations
@@ -64,6 +69,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from web_action_agent.actions import Done
 from web_action_agent.config import Config, redact, register_secret, resolve_env
+from web_action_agent.cost import PriceList, shipped_prices
 from web_action_agent.timeouts import LLM_TIMEOUT
 
 #: The committed endpoint descriptions. Packaged next to the module so the file
@@ -668,9 +674,11 @@ class CallRecord:
             self-hosted endpoint has, which is why it is always recorded.
         finish_reason: Why generation stopped; ``"length"`` here explains a
             truncated action better than the parse failure it causes.
-        cost_usd: Dollars, filled in later from the checked-in pricing table.
-            None where the route is free, local, or unpriced — reported as
-            unknown rather than guessed at as zero.
+        cost_usd: Dollars, looked up in the checked-in price table from the
+            profile and the model that served the call. None where the route is
+            free, self-hosted, or simply unpriced — all three recorded as
+            unknown rather than guessed at as zero, because a false zero
+            quietly corrupts every total that includes it.
         schema_enforced: Whether the endpoint was asked to constrain decoding
             to the schema, rather than merely being shown one in the prompt.
             False covers both "no schema was asked for" and "this route cannot
@@ -848,6 +856,7 @@ class ModelClient:
         api_key: str | None = None,
         timeout_s: float = 90.0,
         backoff: Backoff | None = None,
+        prices: PriceList | None = None,
         sleep: Callable[[float], None] = time.sleep,
         spread: Callable[[], float] = random.random,
         env: Mapping[str, str] | None = None,
@@ -861,6 +870,8 @@ class ModelClient:
                 from ``env``.
             backoff: What to do when the endpoint says it is too busy.
                 Defaults to the documented policy.
+            prices: What each profile charges. Defaults to the table shipped
+                with the project, read once per process.
             sleep: How to wait between attempts. Injected so that a test of the
                 backoff does not actually take the backoff.
             spread: Where the jitter comes from -- a callable returning a
@@ -880,6 +891,7 @@ class ModelClient:
         self.profile = profile
         self.timeout_s = timeout_s
         self.backoff = backoff or Backoff()
+        self.prices = prices or shipped_prices()
         self._sleep = sleep
         self._spread = spread
         # Screenshots discarded by observation_message for want of a vision
@@ -1075,14 +1087,23 @@ class ModelClient:
         completion, latency_s, backoffs = self._call_with_backoff(request, route, ceiling)
 
         text, finish_reason = self._read_choice(completion)
+        prompt_tokens = self._usage(completion, "prompt_tokens")
+        completion_tokens = self._usage(completion, "completion_tokens")
         record = CallRecord(
             profile=self.profile.name,
             model=route.model,
             vision=vision,
-            prompt_tokens=self._usage(completion, "prompt_tokens"),
-            completion_tokens=self._usage(completion, "completion_tokens"),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
             latency_s=latency_s,
             finish_reason=finish_reason,
+            # Priced here, at the moment the call is recorded, because this is
+            # where the route's resolved model is known -- a vision step does
+            # not use the model the profile names, and pricing it later from
+            # the profile alone would quietly bill the wrong rate.
+            cost_usd=self.prices.cost_of(
+                self.profile.name, route.model, prompt_tokens, completion_tokens
+            ),
             schema_enforced=constrained,
             backoffs=backoffs,
         )
