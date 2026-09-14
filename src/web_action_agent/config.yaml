@@ -49,6 +49,13 @@ start_url: https://en.wikipedia.org/
 # Hard cap on steps in one run. The loop's guarantee that it terminates.
 max_steps: 25
 
+# How many recent steps the planner sees word for word. Older steps are not
+# dropped: they are folded into a running notepad -- the same line while there
+# is room, then counted -- so what was typed and where the agent went survive
+# however long the run goes on. Kept small, because the page in front of the
+# agent is what the next decision is about, and a long transcript buries it.
+history_window: 5
+
 # How many times one step may be re-planned after the validator rejects the
 # action, before the step is recorded as failed.
 retry_budget: 2

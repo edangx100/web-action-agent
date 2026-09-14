@@ -407,7 +407,11 @@ class Planner:
         )
 
 
-def render_history(entries: Sequence[Mapping[str, str]]) -> tuple[str, ...]:
+def render_history(
+    entries: Sequence[Mapping[str, str]],
+    *,
+    start: int = 1,
+) -> tuple[str, ...]:
     """Render step records as the history lines the planner prompt takes.
 
     A convenience for callers that hold step records rather than lines, and the
@@ -418,6 +422,10 @@ def render_history(entries: Sequence[Mapping[str, str]]) -> tuple[str, ...]:
         entries: One mapping per step, with an ``action`` (what was chosen, as
             :meth:`Action.describe` renders it) and a ``result`` (what came of
             it, in a few words).
+        start: The number of the first entry. One for a whole run; later for a
+            window of recent steps, which would otherwise always appear to
+            start at the beginning -- telling the model on step 14 that it has
+            only just begun.
 
     Returns:
         tuple[str, ...]: One numbered line per step, e.g.
@@ -425,5 +433,5 @@ def render_history(entries: Sequence[Mapping[str, str]]) -> tuple[str, ...]:
     """
     return tuple(
         f"{number}. {entry.get('action', '?')} -> {entry.get('result', 'no result recorded')}"
-        for number, entry in enumerate(entries, start=1)
+        for number, entry in enumerate(entries, start=start)
     )

@@ -176,6 +176,18 @@ class Config(BaseModel):
         gt=0,
         description="Hard cap on steps per run; the loop's guarantee of termination.",
     )
+    history_window: int = Field(
+        default=5,
+        ge=1,
+        # The planner cuts history at ten steps as a backstop, so a larger
+        # window would only look larger. A test holds this bound level with
+        # the planner's own constant.
+        le=10,
+        description=(
+            "Recent steps the planner sees word for word. Older steps are folded "
+            "into the running notepad rather than dropped."
+        ),
+    )
     retry_budget: int = Field(
         default=2,
         ge=0,
