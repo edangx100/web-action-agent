@@ -220,11 +220,27 @@ def test_work_that_did_not_happen_is_a_task_failure_not_a_usage_error() -> None:
     The distinction is the whole point of having two codes: the request was
     understood and accepted, and it is the work that did not succeed. A script
     should treat this like any other failed run, not like its own typo.
+
+    ``run`` used to be the example here and is now built, so the example is a
+    command that is not: the rule is about the exit codes, not about which
+    command happens to be unfinished this month.
     """
-    result = invoke(["run", "find the opening hours"])
+    result = invoke(["skills", "list"])
 
     assert result.exit_code == EXIT_TASK_FAILURE
     assert "not built yet" in result.output
+
+
+def test_a_run_with_no_endpoint_configured_is_a_usage_error() -> None:
+    """No key means nothing was attempted and nothing spent -- so 2, not 1.
+
+    The message names the variable to set, because "the run failed" would send
+    somebody looking at the agent for a problem that is in their .env.
+    """
+    result = invoke(["run", "find the opening hours"])
+
+    assert result.exit_code == EXIT_USAGE
+    assert "WAA_OPENROUTER_API_KEY" in result.output
 
 
 def test_the_three_exit_codes_are_distinct() -> None:

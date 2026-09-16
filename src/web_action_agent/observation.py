@@ -45,15 +45,32 @@ trace worth keeping.
 planner* is a prompt decision, and prompts live with the planner. This module
 holds the facts; assembling them into the text a model is shown is somebody
 else's job.
+
+**Taking one, though, is here.** :func:`capture` is the one place the four
+perception pieces are put together -- the element extractor, the text
+distiller, the screenshot gate and the annotator -- because every caller that
+needs an observation needs the same four in the same order, and a second
+caller assembling them slightly differently is how two parts of a run end up
+describing the same page two ways. It lives in this module rather than with the
+extractor for a duller reason: the extractor is what this module imports, and
+the reverse import would be a cycle.
 """
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .observer import Element
+from playwright.sync_api import Error as BrowserFailure
+from playwright.sync_api import Page
+
+from .annotate import annotate
+from .config import Config
+from .distill import distill_from_config
+from .observer import Element, extract_elements
+from .screenshot_gate import GateDecision, ScreenshotGate
 
 #: What :meth:`Observation.summary` prints where there is no screenshot. Spelt
 #: out rather than left blank, because a blank means "nothing was recorded"
@@ -210,3 +227,103 @@ class Observation:
             text_truncated=data.get("text_truncated", False),
             screenshot=Path(screenshot) if screenshot else None,
         )
+
+
+def capture(
+    page: Page,
+    *,
+    config: Config,
+    gate: ScreenshotGate | None = None,
+    screenshot_dir: Path | None = None,
+    label: str = "step",
+) -> tuple[Observation, GateDecision | None]:
+    """Look at a page and produce one observation of it.
+
+    The order is not arbitrary. Elements come first because the screenshot gate
+    decides from how many there are, and the annotated screenshot needs them to
+    know what to number. The text extract is independent and always taken.
+
+    An image is produced only when all three of these hold: a gate was given, it
+    says yes for this page, and somewhere was given to put the file. Any one of
+    them missing means a text-only observation -- which is a complete
+    observation, not a degraded one. Nothing in this agent may depend on there
+    being a picture.
+
+    Args:
+        page: The page to look at. The *active* page: after a click opened a
+            tab, that is the tab, which is why callers ask the executor for it
+            rather than remembering one.
+        config: The run's settings, for the text budget and the viewport.
+        gate: The run's screenshot gate, or None to take no screenshot at all.
+        screenshot_dir: Where to write the annotated image, or None for the
+            same. Created if it does not exist.
+        label: Filename stem for this step's image, e.g. ``step-04``.
+
+    Returns:
+        tuple[Observation, GateDecision | None]: The observation, and the gate's
+        decision with its grounds -- None when no gate was given. The decision
+        is returned rather than kept because it belongs in the run's trace: "no
+        screenshot" is a choice, and a reader should be able to see which rule
+        made it.
+
+    Raises:
+        playwright.sync_api.Error: If the page cannot be read at all -- it has
+            closed, or it navigated away mid-extraction. The controller treats
+            that as a dead end rather than retrying it here, because a page
+            that cannot be looked at cannot be acted on either.
+    """
+    elements = extract_elements(page)
+    distilled = distill_from_config(page, config)
+    decision = gate.decide(element_count=len(elements)) if gate else None
+
+    screenshot: Path | None = None
+    if decision is not None and decision.send_screenshot and screenshot_dir is not None:
+        screenshot = _annotated_screenshot(page, elements, screenshot_dir, label)
+
+    return (
+        Observation(
+            url=page.url,
+            title=page.title(),
+            elements=elements,
+            text=distilled.text,
+            text_truncated=distilled.truncated,
+            screenshot=screenshot,
+        ),
+        decision,
+    )
+
+
+def _annotated_screenshot(
+    page: Page,
+    elements: tuple[Element, ...],
+    directory: Path,
+    label: str,
+) -> Path | None:
+    """Photograph the page and draw the element numbers onto the copy.
+
+    Args:
+        page: The page to photograph.
+        elements: The elements to number, from this same look at the page.
+        directory: Where the annotated image goes.
+        label: Filename stem.
+
+    Returns:
+        Path | None: The annotated image, or None if the browser could not take
+        the photograph. None rather than an exception on purpose: the image is
+        the optional channel, and a run must not end because a screenshot
+        failed when the two text channels are in hand.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    plain = directory / f"{label}-plain.png"
+    marked = directory / f"{label}.png"
+    try:
+        page.screenshot(path=plain)
+        annotate(plain, elements, marked)
+    except (OSError, BrowserFailure):
+        return None
+    finally:
+        # The unmarked photograph is scaffolding: the annotator needs a file to
+        # read, and the numbered copy is the one anybody wants afterwards.
+        with suppress(OSError):
+            plain.unlink()
+    return marked

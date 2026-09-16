@@ -120,6 +120,33 @@ def a_throttle(directory, *, delay_s=DELAY_S, robots=None):
     return Throttle(delay_s, directory=directory, robots=robots)
 
 
+def gap_between(throttle, first_url, second_url, *, second=None):
+    """Measure how far apart two visits to a site are actually allowed to be.
+
+    The throttle's promise is about the *gap between visits*, not about how
+    long any one caller sits waiting: a worker that arrives a moment after
+    another correctly waits a moment less. Asserting on the gap therefore
+    tests the guarantee rather than an accident of timing -- and it cannot be
+    broken by a machine stalling mid-test, since a stall can only make a gap
+    wider.
+
+    Args:
+        throttle: The throttle taking the first visit.
+        first_url: The first address.
+        second_url: The second address.
+        second: The throttle taking the second visit, for the tests about two
+            workers. Defaults to the same one.
+
+    Returns:
+        float: Seconds from the first visit being allowed to the second being
+        allowed.
+    """
+    started = time.monotonic()
+    throttle.wait(first_url)
+    (second or throttle).wait(second_url)
+    return time.monotonic() - started
+
+
 def visit(directory, url, delay_s=DELAY_S):
     """Take one turn at a site, through a throttle of this worker's own.
 
@@ -154,11 +181,10 @@ def test_the_first_visit_to_a_site_does_not_wait(tmp_path):
 def test_a_second_visit_to_the_same_site_waits(tmp_path):
     """The whole feature, in its simplest form."""
     throttle = a_throttle(tmp_path)
-    throttle.wait(f"{SITE}/a")
 
-    waited = throttle.wait(f"{SITE}/b")
+    gap = gap_between(throttle, f"{SITE}/a", f"{SITE}/b")
 
-    assert waited >= DELAY_S * 0.9, "the second visit should have been held back"
+    assert gap >= DELAY_S * 0.9, "the second visit should have been held back"
 
 
 @pytest.mark.unit
@@ -174,9 +200,10 @@ def test_visits_to_different_sites_do_not_wait_for_each_other(tmp_path):
 def test_subdomains_of_one_site_share_its_queue(tmp_path):
     """Usually one machine, and always one organisation's bandwidth."""
     throttle = a_throttle(tmp_path)
-    throttle.wait("https://news.example.org/a")
 
-    assert throttle.wait("https://www.example.org/b") >= DELAY_S * 0.9
+    gap = gap_between(throttle, "https://news.example.org/a", "https://www.example.org/b")
+
+    assert gap >= DELAY_S * 0.9
 
 
 @pytest.mark.unit
@@ -190,10 +217,9 @@ def test_a_second_worker_queues_behind_the_first(tmp_path):
     first = a_throttle(tmp_path)
     second = a_throttle(tmp_path)
 
-    first.wait(f"{SITE}/a")
-    waited = second.wait(f"{SITE}/b")
+    gap = gap_between(first, f"{SITE}/a", f"{SITE}/b", second=second)
 
-    assert waited >= DELAY_S * 0.9
+    assert gap >= DELAY_S * 0.9
 
 
 @pytest.mark.unit
@@ -237,16 +263,22 @@ def test_two_worker_processes_queue_behind_each_other(tmp_path):
         results = pool.starmap(visit, [(str(tmp_path), f"{SITE}/a", DELAY_S)] * 2)
 
     times = sorted(moment for moment, _ in results)
-    assert times[1] - times[0] >= DELAY_S * 0.9
-    assert max(waited for _, waited in results) >= DELAY_S * 0.9
+    assert times[1] - times[0] >= DELAY_S * 0.9, "the site saw two visits a delay apart"
+    # One of them had to wait; which one, and for exactly how long, depends on
+    # how far apart the two processes started. Asserting a *full* delay here
+    # would be asserting that they started at the same instant, which is not
+    # something a machine promises -- and it is not what the throttle promises
+    # either. The gap above is the guarantee; this is only that coordination
+    # happened at all rather than both going straight through.
+    assert max(waited for _, waited in results) > 0
 
 
 @pytest.mark.unit
 def test_a_reservation_outlives_the_object_that_made_it(tmp_path):
     """A worker that finishes and exits still counts as having visited."""
-    a_throttle(tmp_path).wait(f"{SITE}/a")
+    gap = gap_between(a_throttle(tmp_path), f"{SITE}/a", f"{SITE}/b", second=a_throttle(tmp_path))
 
-    assert a_throttle(tmp_path).wait(f"{SITE}/b") >= DELAY_S * 0.9
+    assert gap >= DELAY_S * 0.9
 
 
 @pytest.mark.unit
@@ -267,11 +299,10 @@ def test_a_site_asking_for_a_longer_gap_gets_it(tmp_path):
     """
     robots = RobotsPolicy(fetch=Fetcher("User-agent: *\nCrawl-delay: 1\n"))
     throttle = a_throttle(tmp_path, delay_s=0.05, robots=robots)
-    throttle.wait(f"{SITE}/a")
 
-    waited = throttle.wait(f"{SITE}/b")
+    gap = gap_between(throttle, f"{SITE}/a", f"{SITE}/b")
 
-    assert waited >= 0.9, "the site's own delay should have replaced the shorter default"
+    assert gap >= 0.9, "the site's own delay should have replaced the shorter default"
 
 
 @pytest.mark.unit
@@ -279,9 +310,10 @@ def test_a_site_asking_for_a_shorter_gap_is_not_obeyed(tmp_path):
     """The configured delay is a floor, not a suggestion the site can lower."""
     robots = RobotsPolicy(fetch=Fetcher("User-agent: *\nCrawl-delay: 0\n"))
     throttle = a_throttle(tmp_path, robots=robots)
-    throttle.wait(f"{SITE}/a")
 
-    assert throttle.wait(f"{SITE}/b") >= DELAY_S * 0.9
+    gap = gap_between(throttle, f"{SITE}/a", f"{SITE}/b")
+
+    assert gap >= DELAY_S * 0.9
 
 
 @pytest.mark.unit
@@ -290,7 +322,7 @@ def test_a_url_nobody_can_parse_still_gets_a_queue(tmp_path):
     throttle = a_throttle(tmp_path)
 
     assert throttle.wait("not a url at all") == 0.0
-    assert throttle.wait("not a url at all") >= DELAY_S * 0.9
+    assert gap_between(throttle, "not a url at all", "not a url at all") >= DELAY_S * 0.9
 
 
 @pytest.mark.unit

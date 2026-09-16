@@ -36,13 +36,25 @@ benchmark scripts, and the README.
 from __future__ import annotations
 
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from web_action_agent.allowlist import Allowlist, AllowlistError
+from web_action_agent.browser import BrowserProcess, BrowserSettings
 from web_action_agent.capabilities import report_capabilities
 from web_action_agent.config import Config, ConfigError, flag_for, load_config, resolve_env
+from web_action_agent.controller import Controller, RunReport
+from web_action_agent.executor import Executor
+from web_action_agent.memory import Memory
+from web_action_agent.model_client import ModelClient, ModelClientError
+from web_action_agent.planner import Planner
+from web_action_agent.politeness import politeness_for_run
+from web_action_agent.screenshot_gate import ScreenshotGate
+from web_action_agent.timeouts import RunBudget
+from web_action_agent.validator import Validator
 
 #: The command did what was asked.
 EXIT_SUCCESS = 0
@@ -54,6 +66,11 @@ EXIT_TASK_FAILURE = 1
 #: The command could not be run at all -- an unknown flag, a missing argument,
 #: an unreadable setting. Nothing was attempted, so nothing was spent.
 EXIT_USAGE = 2
+
+#: Where a run puts what it leaves behind. One folder per run, named for the
+#: moment it started. The trace writer will own the contents; for now the
+#: run's screenshots go here, which is why the folder exists this early.
+RUNS_ROOT = Path("runs")
 
 #: Where the benchmark's task definitions live when ``--suite`` is not given.
 DEFAULT_SUITE = Path("benchmark/tasks.yaml")
@@ -163,6 +180,87 @@ def _startup(**overrides: object) -> Config:
     return config
 
 
+def _do_one_task(config: Config, task: str) -> int:
+    """Assemble the agent, run one task, and report how it went.
+
+    This is the wiring: every component the run needs, built once, in the one
+    place that knows the run's settings. The order is forced by what depends on
+    what -- the model client needs a profile before the planner can exist, the
+    gate needs to know whether that profile can see images, and the validator
+    needs the allowlist the start URL implies.
+
+    Args:
+        config: The resolved settings for this run.
+        task: The task in the user's own words.
+
+    Returns:
+        int: :data:`EXIT_SUCCESS` if the agent finished the task,
+        :data:`EXIT_TASK_FAILURE` if it did not, or :data:`EXIT_USAGE` if the
+        run could not be set up -- which is not a failed run but an unstarted
+        one.
+    """
+    try:
+        client = ModelClient.from_config(config)
+        allowlist = Allowlist.derive(config.start_url, config_extra=config.allowlist_extra)
+    except (ModelClientError, AllowlistError) as error:
+        # Nothing has been attempted and nothing spent: the fix is to the
+        # configuration, which is what exit code 2 means.
+        typer.echo(f"waa: {error}", err=True)
+        return EXIT_USAGE
+
+    throttle, robots = politeness_for_run(config)
+    folder = RUNS_ROOT / datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+
+    # One browser process, one task, one context inside it -- the same shape a
+    # benchmark worker uses, so an ad-hoc run and a measured one behave alike.
+    with (
+        BrowserProcess(BrowserSettings.from_config(config)) as browser,
+        browser.task_session() as session,
+    ):
+        controller = Controller(
+            planner=Planner(client),
+            validator=Validator(allowlist, robots=robots),
+            executor=Executor(
+                session,
+                action_timeout_s=config.action_timeout_s,
+                throttle=throttle,
+            ),
+            memory=Memory.from_config(config),
+            max_steps=config.max_steps,
+            retry_budget=config.retry_budget,
+            gate=ScreenshotGate.from_config(config, supports_vision=client.supports_vision),
+            budget=RunBudget.from_config(config),
+            screenshot_dir=folder / "screenshots",
+            config=config,
+        )
+        report = controller.run(task, start_url=config.start_url)
+
+    _report_run(report, folder)
+    return EXIT_SUCCESS if report.outcome.ok else EXIT_TASK_FAILURE
+
+
+def _report_run(report: RunReport, folder: Path) -> None:
+    """Print what the run did, as a person would want to read it.
+
+    Steps go to standard error and the answer to standard output, so that
+    ``waa run ... > answer.txt`` gives the answer alone while the reader still
+    sees the run happen. A failed run prints no answer at all rather than an
+    empty line, because a blank stdout is easier to check for than a blank line.
+
+    Args:
+        report: What the run produced.
+        folder: Where the run's files are, for the closing line.
+    """
+    for step in report.steps:
+        typer.echo(step.summary(), err=True)
+    typer.echo(report.outcome.summary(), err=True)
+    typer.echo(report.cost.summary(), err=True)
+    if report.steps and any(step.observation.has_screenshot for step in report.steps):
+        typer.echo(f"screenshots: {folder / 'screenshots'}", err=True)
+    if report.outcome.ok and report.outcome.answer:
+        typer.echo(report.outcome.answer)
+
+
 def _not_built_yet(what: str) -> None:
     """Report that a command's machinery does not exist yet, and stop.
 
@@ -210,9 +308,17 @@ def run(
         profile: Endpoint profile for this run. Defaults to the configured one.
         headed: True to show the browser window, False to hide it, None to
             leave the setting as the configuration files have it.
+
+    Raises:
+        typer.Exit: With :data:`EXIT_SUCCESS` when the agent completed the
+            task, :data:`EXIT_TASK_FAILURE` when it did not, and
+            :data:`EXIT_USAGE` when the run could not be set up at all -- no
+            API key, or a start URL that is not a usable address. The last of
+            those is not a task failure: nothing was attempted and nothing was
+            spent.
     """
-    _startup(start_url=start_url, profile=profile, headed=headed)
-    _not_built_yet("the agent loop")
+    config = _startup(start_url=start_url, profile=profile, headed=headed)
+    raise typer.Exit(_do_one_task(config, task))
 
 
 @app.command(
