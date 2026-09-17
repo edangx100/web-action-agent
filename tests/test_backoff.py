@@ -45,6 +45,7 @@ from web_action_agent.model_client import (
     load_profile,
     run_failure,
 )
+from web_action_agent.trace import new_id
 
 PROFILE = load_profile("local")
 """Profile: A shipped profile. Nothing is sent anywhere; the transport is a stub."""
@@ -507,6 +508,9 @@ def test_a_pause_reads_as_one_fragment_of_a_call_log():
 def test_a_record_with_no_waiting_says_zero_rather_than_nothing():
     """Every call answers the question, so nothing downstream needs a special case."""
     record = CallRecord(
+        call_id=new_id("call"),
+        started_at="2026-09-17T08:00:00.000Z",
+        ended_at="2026-09-17T08:00:00.100Z",
         profile="local",
         model="test",
         vision=False,

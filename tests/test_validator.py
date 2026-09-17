@@ -41,6 +41,7 @@ from web_action_agent.planner import (
     PlannerDecision,
     PlannerFailure,
 )
+from web_action_agent.trace import new_id
 from web_action_agent.validator import (
     BLOCKED_NAVIGATION,
     FORBIDDEN_ACTION,
@@ -165,6 +166,9 @@ def a_record() -> CallRecord:
         when a test asserts a rejected attempt was still counted.
     """
     return CallRecord(
+        call_id=new_id("call"),
+        started_at="2026-09-17T08:00:00.000Z",
+        ended_at="2026-09-17T08:00:00.400Z",
         profile="openrouter",
         model="a-model",
         vision=False,

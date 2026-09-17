@@ -63,6 +63,7 @@ from .outcomes import (
 from .planner import Planner, PlannerDecision
 from .screenshot_gate import GateDecision, ScreenshotGate
 from .timeouts import RunBudget
+from .trace import TraceWriter, new_id, utc_now
 from .validator import Rejection, StepOutcome, Validator, plan_until_valid
 
 #: How many identical actions in a row are allowed before one is replaced. Two,
@@ -124,6 +125,17 @@ class StepReport:
     """One step of a run, as the trace will record it.
 
     Attributes:
+        step_id: A stable id for this step, minted when the step is recorded.
+            Every model call the step made carries it, which is what lets the
+            run's flattened cost log be put back under its steps -- and what
+            keeps a step identifiable once it has been lifted out of its folder
+            into a benchmark's table, where its number alone would collide with
+            the same-numbered step of every other run.
+        started_at: When the step began, RFC 3339 in UTC: the moment the
+            planner was first asked. Recorded as a timestamp rather than a
+            duration, because a duration cannot be turned back into a position
+            on the run's timeline.
+        ended_at: When the step was recorded, after its action was executed.
         number: The step's position in the run, from 1. Step 0's navigation is
             not one of these; it is reported on the run instead.
         observation: The page this step was decided against.
@@ -143,6 +155,9 @@ class StepReport:
         records: What this step's model calls cost, refused attempts included.
     """
 
+    step_id: str
+    started_at: str
+    ended_at: str
     number: int
     observation: Observation
     action: Action | None = None
@@ -179,8 +194,13 @@ class StepReport:
             dict[str, Any]: The step, with each part rendered by whichever
             component owns it -- so the trace and the run agree by
             construction rather than by two pieces of code being kept in step.
+            The keys are the ones ``schemas/action_log.schema.json`` requires,
+            and the trace writer validates against it on the way out.
         """
         return {
+            "step_id": self.step_id,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
             "number": self.number,
             "observation": self.observation.to_dict(),
             "action": self.action.to_dict() if self.action else None,
@@ -189,9 +209,23 @@ class StepReport:
             "rejections": [rejection.to_dict() for rejection in self.rejections],
             "forced": self.forced,
             "screenshot_decision": self.gate.to_dict() if self.gate else None,
-            # `asdict` recurses into the backoff records for free, which is
-            # the whole reason the cost record is a dataclass.
-            "calls": [asdict(record) for record in self.records],
+            "calls": [
+                {
+                    **asdict(record),
+                    # `asdict` leaves a tuple field a tuple, and the trace is
+                    # JSON -- where the only sequence is a list. Rendered by
+                    # the backoff record itself, like every other part of this
+                    # dictionary, so there is one place that decides what a
+                    # pause looks like on disk.
+                    "backoffs": [event.to_dict() for event in record.backoffs],
+                    # The parent link is added here rather than carried on the
+                    # record itself: the model client makes the call and has no
+                    # idea which step it is inside, so the step is the first
+                    # thing that knows.
+                    "parent_step_id": self.step_id,
+                }
+                for record in self.records
+            ],
         }
 
 
@@ -207,6 +241,9 @@ class RunReport:
         start_url: Where the run opened.
         outcome: The verdict. Always set -- there is no path out of the loop
             that leaves it unset, which is the point of the single exit.
+        started_at: When the run began, RFC 3339 in UTC -- before the opening
+            navigation, which is part of the run even though it is not a step.
+        ended_at: When the verdict was reached.
         steps: Every step, in order.
         cost: The roll-up of every model call the run made, refused attempts
             and rate-limit waiting included.
@@ -215,6 +252,8 @@ class RunReport:
     task: str
     start_url: str
     outcome: RunOutcome
+    started_at: str = ""
+    ended_at: str = ""
     steps: tuple[StepReport, ...] = ()
     cost: RunCost = field(default_factory=RunCost)
 
@@ -240,6 +279,8 @@ class RunReport:
         return {
             "task": self.task,
             "start_url": self.start_url,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
             "outcome": self.outcome.to_dict(),
             "final_action": self.outcome.as_done().to_dict(),
             "steps": [step.to_dict() for step in self.steps],
@@ -270,6 +311,7 @@ class Controller:
         skills: Sequence[str] = (),
         config: Config | None = None,
         observe: PageObserver | None = None,
+        trace: TraceWriter | None = None,
     ) -> None:
         """Assemble a run.
 
@@ -303,6 +345,9 @@ class Controller:
                 only other way the loop can see a page.
             observe: How to look at the page, for a test that has no browser.
                 Defaults to really looking at the executor's current page.
+            trace: Where each step is written as it completes. None means the
+                run leaves nothing behind, which is what a unit test wants and
+                what no real run should do.
 
         Raises:
             ValueError: If neither ``config`` nor ``observe`` is given. A loop
@@ -325,8 +370,10 @@ class Controller:
         self._skills = tuple(skills)
         self._config = config
         self._observe_page = observe or self._really_observe
+        self._trace = trace
 
         self._step = 0
+        self._step_started_at = utc_now()
         self._steps: list[StepReport] = []
         self._observation: Observation | None = None
         # What was actually executed, most recent last, for spotting a loop.
@@ -351,14 +398,25 @@ class Controller:
         Returns:
             RunReport: The verdict, every step, and what the run cost.
         """
+        started_at = utc_now()
         outcome = self._drive(task, start_url)
-        return RunReport(
+        report = RunReport(
             task=task,
             start_url=start_url,
             outcome=outcome,
+            started_at=started_at,
+            ended_at=utc_now(),
             steps=tuple(self._steps),
             cost=total_cost(record for step in self._steps for record in step.records),
         )
+        if self._trace is not None:
+            # The verdict is the one thing that can only be written at the end,
+            # because it is the one thing that is not known until then. Every
+            # step is already on disk, written as it finished -- so a run that
+            # never reaches this line still leaves a readable folder, minus
+            # exactly the file whose absence means "this run was killed".
+            self._trace.finish(report)
+        return report
 
     def _drive(self, task: str, start_url: str) -> RunOutcome:
         """Open the start page, then step until something ends the run.
@@ -442,6 +500,12 @@ class Controller:
         """
         observation = self._observation
         assert observation is not None, "a step is only taken after a page has been observed"
+
+        # Read once here and kept for whichever path ends up recording the
+        # step. Taking it again inside `_add_step` would time the recording
+        # rather than the step, and would quietly exclude the planning that is
+        # usually most of a step's wall clock.
+        self._step_started_at = utc_now()
 
         try:
             plan = plan_until_valid(
@@ -707,6 +771,13 @@ class Controller:
             forced: Why the action was substituted, if it was.
             attempts: Overrides the attempt count, for a step that never got as
                 far as a plan.
+
+        Raises:
+            TraceError: If the step cannot be written to the run folder, or
+                does not fit the action log schema. Not caught here: a trace
+                that is silently missing steps is believed exactly as much as a
+                complete one, and every reader downstream would be reading a
+                run that did not happen the way the file says it did.
         """
         rejections = ()
         records: tuple[CallRecord, ...] = ()
@@ -715,19 +786,26 @@ class Controller:
                 attempt.rejection for attempt in plan.attempts if attempt.rejection is not None
             )
             records = plan.records
-        self._steps.append(
-            StepReport(
-                number=self._step,
-                observation=observation,
-                action=action,
-                result=result,
-                attempts=attempts or (len(plan.attempts) if plan else 1),
-                rejections=rejections,
-                forced=forced,
-                gate=getattr(self, "_last_gate", None),
-                records=records,
-            )
+        step = StepReport(
+            step_id=new_id("step"),
+            started_at=self._step_started_at,
+            ended_at=utc_now(),
+            number=self._step,
+            observation=observation,
+            action=action,
+            result=result,
+            attempts=attempts or (len(plan.attempts) if plan else 1),
+            rejections=rejections,
+            forced=forced,
+            gate=getattr(self, "_last_gate", None),
+            records=records,
         )
+        self._steps.append(step)
+        if self._trace is not None:
+            # Written now, not at the end of the run. This is the flush-per-step
+            # contract: when this returns, the step is on disk, so whatever
+            # happens during the next one cannot take this one with it.
+            self._trace.write_step(step)
 
 
 def _screenshot_bytes(observation: Observation) -> bytes | None:

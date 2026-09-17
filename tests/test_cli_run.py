@@ -13,6 +13,7 @@ components in the right order and passes each of them the right settings -- and
 that is exactly what no unit test of any one component can catch.
 """
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -25,6 +26,7 @@ from web_action_agent import cli
 from web_action_agent.cli import EXIT_SUCCESS, EXIT_TASK_FAILURE, app
 from web_action_agent.config import Config
 from web_action_agent.model_client import ModelClient, load_profile
+from web_action_agent.trace import OUTCOME_FILE, read_action_log
 
 runner = CliRunner()
 """CliRunner: Runs the command line in-process and captures what it printed."""
@@ -240,3 +242,39 @@ def test_a_run_that_runs_out_of_steps_says_so(
     assert result.exit_code == EXIT_TASK_FAILURE
     assert "step_cap" in result.output
     assert "failed in 3 steps" in result.output
+
+
+@pytest.mark.fixture
+def test_the_command_leaves_a_run_folder_and_says_where(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    playwright: Any,
+    fixture_site: Any,
+) -> None:
+    """Every run leaves its evidence behind, and names the folder it left it in.
+
+    Tested here rather than only in the trace writer's own module because this
+    is the wiring: the folder, the screenshot directory the observer writes
+    into, and the writer the controller flushes to all have to be the same
+    place, and nothing but the command assembles all three.
+    """
+    a_run_in_this_process(
+        monkeypatch,
+        tmp_path,
+        playwright,
+        '{"action": "done", "status": "success", "answer": "09:00 to 17:30"}',
+    )
+
+    result = invoke(["run", "the hours", "--start-url", fixture_site.url_for("search.html")])
+
+    assert result.exit_code == EXIT_SUCCESS, result.output
+    folders = list((tmp_path / "runs").iterdir())
+    assert len(folders) == 1, "one run, one folder"
+    folder = folders[0]
+    assert str(folder) in result.output, "and the reader is told where it is"
+    steps = read_action_log(folder)
+    assert [step["number"] for step in steps] == [1]
+    assert (
+        json.loads((folder / OUTCOME_FILE).read_text(encoding="utf-8"))["outcome"]["answer"]
+        == "09:00 to 17:30"
+    )

@@ -72,6 +72,12 @@ from web_action_agent.config import Config, redact, register_secret, resolve_env
 from web_action_agent.cost import PriceList, shipped_prices
 from web_action_agent.timeouts import LLM_TIMEOUT
 
+# The trace owns the form every timestamp and id in a run folder takes, and a
+# call record is written straight into that folder -- so it is minted here in
+# the trace's own form rather than in a second one that would have to be kept
+# level with it.
+from web_action_agent.trace import new_id, utc_now
+
 #: The committed endpoint descriptions. Packaged next to the module so the file
 #: is found identically from a checkout and from an installed wheel.
 DEFAULT_PROFILES_PATH = Path(__file__).resolve().parent / "profiles.yaml"
@@ -662,6 +668,18 @@ class CallRecord:
     wasted, or the cost-per-task figure flatters itself.
 
     Attributes:
+        call_id: A stable id for this call, minted when the record is made.
+            What lets the run's flattened cost log be put back under its steps,
+            and what keeps two calls made in the same step distinguishable
+            after they have been lifted into a benchmark's table.
+        started_at: When the call was first attempted, RFC 3339 in UTC. Waiting
+            out a busy endpoint is inside this span, because the run really was
+            held up for it. A *timestamp* rather than only a duration: a
+            duration cannot be turned back into a position on the run's
+            timeline, and placing calls on that timeline is the whole point.
+        ended_at: When the reply arrived, in the same form. The gap between the
+            two is ``latency_s`` plus ``waited_s`` plus the small cost of
+            getting the request out of the door.
         profile: Which profile served the call.
         model: The exact model identifier used — the text or vision route's,
             resolved, not the one configured.
@@ -691,6 +709,9 @@ class CallRecord:
             queue", which ``latency_s`` alone cannot show.
     """
 
+    call_id: str
+    started_at: str
+    ended_at: str
     profile: str
     model: str
     vision: bool
@@ -1084,12 +1105,19 @@ class ModelClient:
             request["timeout"] = timeout_s
 
         ceiling = timeout_s if timeout_s is not None else self.timeout_s
+        # Taken before the first attempt, so the span covers any waiting the
+        # endpoint made the run do as well as the attempt that finally worked.
+        started_at = utc_now()
         completion, latency_s, backoffs = self._call_with_backoff(request, route, ceiling)
+        ended_at = utc_now()
 
         text, finish_reason = self._read_choice(completion)
         prompt_tokens = self._usage(completion, "prompt_tokens")
         completion_tokens = self._usage(completion, "completion_tokens")
         record = CallRecord(
+            call_id=new_id("call"),
+            started_at=started_at,
+            ended_at=ended_at,
             profile=self.profile.name,
             model=route.model,
             vision=vision,

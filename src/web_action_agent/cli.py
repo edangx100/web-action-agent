@@ -54,6 +54,7 @@ from web_action_agent.planner import Planner
 from web_action_agent.politeness import politeness_for_run
 from web_action_agent.screenshot_gate import ScreenshotGate
 from web_action_agent.timeouts import RunBudget
+from web_action_agent.trace import TraceError, TraceWriter
 from web_action_agent.validator import Validator
 
 #: The command did what was asked.
@@ -199,17 +200,22 @@ def _do_one_task(config: Config, task: str) -> int:
         run could not be set up -- which is not a failed run but an unstarted
         one.
     """
+    folder = RUNS_ROOT / datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
     try:
         client = ModelClient.from_config(config)
         allowlist = Allowlist.derive(config.start_url, config_extra=config.allowlist_extra)
-    except (ModelClientError, AllowlistError) as error:
+        # Opened before the browser starts, and before anything is spent: a run
+        # whose folder cannot be written is a run that would produce no
+        # evidence, and finding that out after paying for twenty model calls
+        # would be finding it out too late.
+        trace = TraceWriter.open(folder, task=task, start_url=config.start_url, config=config)
+    except (ModelClientError, AllowlistError, TraceError) as error:
         # Nothing has been attempted and nothing spent: the fix is to the
         # configuration, which is what exit code 2 means.
         typer.echo(f"waa: {error}", err=True)
         return EXIT_USAGE
 
     throttle, robots = politeness_for_run(config)
-    folder = RUNS_ROOT / datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
 
     # One browser process, one task, one context inside it -- the same shape a
     # benchmark worker uses, so an ad-hoc run and a measured one behave alike.
@@ -230,8 +236,9 @@ def _do_one_task(config: Config, task: str) -> int:
             retry_budget=config.retry_budget,
             gate=ScreenshotGate.from_config(config, supports_vision=client.supports_vision),
             budget=RunBudget.from_config(config),
-            screenshot_dir=folder / "screenshots",
+            screenshot_dir=trace.screenshot_dir,
             config=config,
+            trace=trace,
         )
         report = controller.run(task, start_url=config.start_url)
 
@@ -255,8 +262,10 @@ def _report_run(report: RunReport, folder: Path) -> None:
         typer.echo(step.summary(), err=True)
     typer.echo(report.outcome.summary(), err=True)
     typer.echo(report.cost.summary(), err=True)
-    if report.steps and any(step.observation.has_screenshot for step in report.steps):
-        typer.echo(f"screenshots: {folder / 'screenshots'}", err=True)
+    # Named on every run, success or failure. The folder is the whole of the
+    # run's evidence, and a person who cannot find it has, in practice, a run
+    # that left nothing behind.
+    typer.echo(f"trace: {folder}", err=True)
     if report.outcome.ok and report.outcome.answer:
         typer.echo(report.outcome.answer)
 

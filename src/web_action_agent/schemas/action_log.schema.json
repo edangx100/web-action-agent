@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/edangx100/web-action-agent/schemas/action_log.schema.json",
+  "title": "Action log record",
+  "description": "One completed step of one run, as written to actions.jsonl. This file is the contract between the writer and everything that reads a run afterwards -- the replayer, the benchmark, the span exporter -- so a field removed here is a field those readers lose for every run already on disk.",
+  "type": "object",
+  "required": [
+    "step_id",
+    "number",
+    "started_at",
+    "ended_at",
+    "observation",
+    "action",
+    "result",
+    "attempts",
+    "rejections",
+    "forced",
+    "screenshot_decision",
+    "calls"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "step_id": {
+      "$ref": "#/$defs/identifier",
+      "description": "Stable id for this step, unique within the run and referenced by every call the step made."
+    },
+    "number": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Position in the run, counting from 1. Step 0's opening navigation is recorded on the run, not here."
+    },
+    "started_at": {
+      "$ref": "#/$defs/timestamp",
+      "description": "When the step began: the moment the planner was first asked."
+    },
+    "ended_at": {
+      "$ref": "#/$defs/timestamp",
+      "description": "When the step was recorded, after its action was executed."
+    },
+    "observation": {
+      "$ref": "#/$defs/observation",
+      "description": "The page this step was decided against."
+    },
+    "action": {
+      "type": ["object", "null"],
+      "description": "The action performed, or null for a step whose every planning attempt was refused.",
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "Which of the seven actions this is."
+        }
+      }
+    },
+    "result": {
+      "type": ["object", "null"],
+      "description": "What came of performing the action, or null for a step that performed none and for the final done.",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "How the execution ended, in the executor's own vocabulary."
+        }
+      }
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Planning attempts this step took. More than one means the validator sent the planner back."
+    },
+    "rejections": {
+      "type": "array",
+      "description": "Why each refused attempt was refused, in order. Empty on a step approved first time.",
+      "items": {
+        "type": "object"
+      }
+    },
+    "forced": {
+      "type": "string",
+      "description": "Why the controller replaced the planner's action, or empty when it did not."
+    },
+    "screenshot_decision": {
+      "type": ["object", "null"],
+      "description": "Whether this step's observation carried an image, and the rule that decided it. Null when the run had no gate."
+    },
+    "calls": {
+      "type": "array",
+      "description": "Every model call this step made, refused attempts included.",
+      "items": {
+        "$ref": "#/$defs/call"
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^(run|step|call)-[0-9a-f]{12}$",
+      "description": "A kind-prefixed random id. The prefix means a bare id in a log line says what it points at."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "RFC 3339, UTC, Z-suffixed. Always a point in time and never a duration: a duration cannot be turned back into a position on the run's timeline."
+    },
+    "observation": {
+      "type": "object",
+      "required": ["url", "title", "elements", "text"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "The page's address at the moment it was read."
+        },
+        "title": {
+          "type": "string",
+          "description": "The page's title."
+        },
+        "elements": {
+          "type": "array",
+          "description": "The interactive elements found in the viewport, numbered as the planner saw them.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "text": {
+          "type": "string",
+          "description": "The distilled page text the planner was shown."
+        },
+        "text_truncated": {
+          "type": "boolean",
+          "description": "Whether that text hit its budget and was cut."
+        },
+        "screenshot": {
+          "type": ["string", "null"],
+          "description": "Path to this step's annotated screenshot, or null when the step carried no image."
+        }
+      }
+    },
+    "call": {
+      "type": "object",
+      "description": "One model call, as the cost log records it. The same records appear in calls.jsonl, flattened out of their steps.",
+      "required": [
+        "call_id",
+        "parent_step_id",
+        "started_at",
+        "ended_at",
+        "profile",
+        "model",
+        "vision",
+        "prompt_tokens",
+        "completion_tokens",
+        "latency_s",
+        "cost_usd"
+      ],
+      "properties": {
+        "call_id": {
+          "$ref": "#/$defs/identifier",
+          "description": "Stable id for this call, unique within the run."
+        },
+        "parent_step_id": {
+          "$ref": "#/$defs/identifier",
+          "description": "The step this call was made during. What lets a flattened cost log be put back under its steps."
+        },
+        "started_at": {
+          "$ref": "#/$defs/timestamp",
+          "description": "When the call was first attempted, waiting for a busy endpoint included."
+        },
+        "ended_at": {
+          "$ref": "#/$defs/timestamp",
+          "description": "When the reply arrived."
+        },
+        "profile": {
+          "type": "string",
+          "description": "The endpoint profile that served the call."
+        },
+        "model": {
+          "type": "string",
+          "description": "The exact model the route resolved to, which on a vision step is not the profile's text model."
+        },
+        "vision": {
+          "type": "boolean",
+          "description": "Whether an image was part of the request."
+        },
+        "prompt_tokens": {
+          "type": ["integer", "null"],
+          "description": "Input tokens billed, or null if the endpoint reported none."
+        },
+        "completion_tokens": {
+          "type": ["integer", "null"],
+          "description": "Output tokens billed, or null if not reported."
+        },
+        "latency_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Seconds the attempt that worked took, with waiting kept out of it."
+        },
+        "finish_reason": {
+          "type": ["string", "null"],
+          "description": "Why generation stopped. 'length' here explains a truncated action better than the parse failure it causes."
+        },
+        "cost_usd": {
+          "type": ["number", "null"],
+          "description": "Dollars, or null where the route is free, self-hosted, or unpriced. Never 0.0 as a stand-in for unknown."
+        },
+        "schema_enforced": {
+          "type": "boolean",
+          "description": "Whether the endpoint was asked to constrain decoding to the schema, rather than merely shown one."
+        },
+        "backoffs": {
+          "type": "array",
+          "description": "Refusals this call survived before it went through, each with the pause it cost.",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  }
+}

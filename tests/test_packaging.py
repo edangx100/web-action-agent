@@ -91,6 +91,22 @@ def test_pip_install_from_requirements_provides_both_entry_points(tmp_path):
         ),
         "planner prompt readable from an installed wheel",
     )
+    # And for the action log schema, which sits in a second subdirectory. Every
+    # trace record is validated against it before being written, so a build
+    # that dropped it would turn the first step of the first run into a crash.
+    assert_ok(
+        run(
+            [
+                python.as_posix(),
+                "-c",
+                (
+                    "from web_action_agent.trace import action_log_schema; "
+                    "assert action_log_schema()['$defs']['timestamp']"
+                ),
+            ]
+        ),
+        "action log schema readable from an installed wheel",
+    )
     assert_ok(
         run([python.as_posix(), "-m", "web_action_agent", "--help"]),
         "python -m web_action_agent --help",

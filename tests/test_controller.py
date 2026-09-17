@@ -74,6 +74,7 @@ from web_action_agent.outcomes import (
 from web_action_agent.planner import PlannerDecision, PlannerFailure
 from web_action_agent.screenshot_gate import ScreenshotGate
 from web_action_agent.timeouts import RunBudget
+from web_action_agent.trace import new_id
 from web_action_agent.validator import Validator
 
 TASK = "Find the opening hours of the Hollow Lane branch."
@@ -151,6 +152,9 @@ class StubPlanner:
         """
         self.asked.append(kwargs)
         record = CallRecord(
+            call_id=new_id("call"),
+            started_at="2026-09-17T08:00:00.000Z",
+            ended_at="2026-09-17T08:00:00.010Z",
             profile="local",
             model="stub",
             vision=False,

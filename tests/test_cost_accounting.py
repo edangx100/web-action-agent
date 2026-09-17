@@ -42,6 +42,7 @@ from web_action_agent.model_client import (
     load_profile,
     load_profiles,
 )
+from web_action_agent.trace import new_id
 
 PROFILE = load_profile("openrouter")
 """Profile: A shipped profile. Nothing is sent anywhere; the transport is a stub."""
@@ -156,6 +157,9 @@ def a_record(**overrides):
         CallRecord: The record.
     """
     fields = {
+        "call_id": new_id("call"),
+        "started_at": "2026-09-17T08:00:00.000Z",
+        "ended_at": "2026-09-17T08:00:01.500Z",
         "profile": "openrouter",
         "model": "nvidia/nemotron-3-nano-30b-a3b",
         "vision": False,

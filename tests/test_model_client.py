@@ -46,6 +46,7 @@ from web_action_agent.model_client import (
     system_message,
     user_message,
 )
+from web_action_agent.trace import new_id
 
 ACTION_SCHEMA = {
     "type": "object",
@@ -553,6 +554,9 @@ def test_unreported_usage_is_unknown_rather_than_zero() -> None:
     assert (record.prompt_tokens, record.total_tokens) == (None, None)
     assert (
         CallRecord(
+            call_id=new_id("call"),
+            started_at="2026-09-17T08:00:00.000Z",
+            ended_at="2026-09-17T08:00:00.100Z",
             profile="x",
             model="m",
             vision=False,
