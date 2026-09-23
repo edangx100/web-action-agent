@@ -52,6 +52,7 @@ from web_action_agent.memory import Memory
 from web_action_agent.model_client import ModelClient, ModelClientError
 from web_action_agent.planner import Planner
 from web_action_agent.politeness import politeness_for_run
+from web_action_agent.reporting import TerminalTrace
 from web_action_agent.screenshot_gate import ScreenshotGate
 from web_action_agent.timeouts import RunBudget
 from web_action_agent.trace import TraceError, TraceWriter
@@ -216,6 +217,10 @@ def _do_one_task(config: Config, task: str) -> int:
         return EXIT_USAGE
 
     throttle, robots = politeness_for_run(config)
+    # Everything the watcher sees goes to standard error, so that standard
+    # output carries the answer alone and `waa run ... > answer.txt` is useful.
+    watching = TerminalTrace(lambda line: typer.echo(line, err=True))
+    watching.opening(task, config.start_url)
 
     # One browser process, one task, one context inside it -- the same shape a
     # benchmark worker uses, so an ad-hoc run and a measured one behave alike.
@@ -239,33 +244,40 @@ def _do_one_task(config: Config, task: str) -> int:
             screenshot_dir=trace.screenshot_dir,
             config=config,
             trace=trace,
+            on_step=watching.step,
         )
         report = controller.run(task, start_url=config.start_url)
 
-    _report_run(report, folder)
-    return EXIT_SUCCESS if report.outcome.ok else EXIT_TASK_FAILURE
+    exit_code = EXIT_SUCCESS if report.outcome.ok else EXIT_TASK_FAILURE
+    _report_run(report, folder, watching, exit_code)
+    return exit_code
 
 
-def _report_run(report: RunReport, folder: Path) -> None:
-    """Print what the run did, as a person would want to read it.
+def _report_run(
+    report: RunReport,
+    folder: Path,
+    watching: TerminalTrace,
+    exit_code: int,
+) -> None:
+    """Close off the run's terminal trace, and print the answer.
 
-    Steps go to standard error and the answer to standard output, so that
+    The steps are already on screen: they were streamed as they happened. What
+    is left is what could only be known at the end -- the cost, where the
+    evidence went, and the verdict with the exit code beside it.
+
+    The answer, and only the answer, goes to standard output, so that
     ``waa run ... > answer.txt`` gives the answer alone while the reader still
-    sees the run happen. A failed run prints no answer at all rather than an
+    watches the run happen. A failed run prints no answer at all rather than an
     empty line, because a blank stdout is easier to check for than a blank line.
 
     Args:
         report: What the run produced.
         folder: Where the run's files are, for the closing line.
+        watching: The terminal trace that has been streaming the steps.
+        exit_code: What the process is about to exit with, named on the last
+            line so a person and a shell read the same verdict.
     """
-    for step in report.steps:
-        typer.echo(step.summary(), err=True)
-    typer.echo(report.outcome.summary(), err=True)
-    typer.echo(report.cost.summary(), err=True)
-    # Named on every run, success or failure. The folder is the whole of the
-    # run's evidence, and a person who cannot find it has, in practice, a run
-    # that left nothing behind.
-    typer.echo(f"trace: {folder}", err=True)
+    watching.closing(report, folder, exit_code)
     if report.outcome.ok and report.outcome.answer:
         typer.echo(report.outcome.answer)
 

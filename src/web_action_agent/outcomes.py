@@ -230,7 +230,13 @@ class RunOutcome:
         if self.ok:
             answer = f": {self.answer}" if self.answer else ""
             return f"success in {self.steps} {plural}{answer}"
-        return f"failed in {self.steps} {plural} ({self.category}): {self.reason}"
+        # Some reasons are written to stand alone elsewhere and open with their
+        # own category -- the validator's does, because in the trace's final
+        # action there is nothing else to say which failure it was. Here the
+        # category is already in brackets, so repeating it would give the run's
+        # most-read line a stutter.
+        reason = (self.reason or "").removeprefix(f"{self.category}: ")
+        return f"failed in {self.steps} {plural} ({self.category}): {reason}"
 
     def to_dict(self) -> dict[str, Any]:
         """Render the outcome as plain data, for the run's trace.

@@ -61,6 +61,7 @@ from .outcomes import (
     RunOutcome,
 )
 from .planner import Planner, PlannerDecision
+from .reporting import StepListener, step_line
 from .screenshot_gate import GateDecision, ScreenshotGate
 from .timeouts import RunBudget
 from .trace import TraceWriter, new_id, utc_now
@@ -171,21 +172,16 @@ class StepReport:
     def summary(self) -> str:
         """Render this step as the single line a run log prints.
 
+        Delegated rather than written here, so that a step reads the same way
+        in a terminal, in a test's failure message, and anywhere else it is
+        printed. The rendering itself belongs to
+        :mod:`~web_action_agent.reporting`, which is the module that knows what
+        a person needs to see; this class knows what happened.
+
         Returns:
-            str: e.g. ``3. click 4 -> ok (0.31s)``, with the forcing noted
-            where there was one and the refusals counted where there were any.
+            str: e.g. ``  3  act    click [4] link "Next page" -> ok (0.31s)``.
         """
-        what = (
-            self.result.summary()
-            if self.result
-            else (self.action.describe() if self.action else "no action")
-        )
-        line = f"{self.number}. {what}"
-        if self.attempts > 1:
-            line += f" [{self.attempts} attempts]"
-        if self.forced:
-            line += f" [forced: {self.forced}]"
-        return line
+        return step_line(self)
 
     def to_dict(self) -> dict[str, Any]:
         """Render this step as plain data, for the run's trace.
@@ -312,6 +308,7 @@ class Controller:
         config: Config | None = None,
         observe: PageObserver | None = None,
         trace: TraceWriter | None = None,
+        on_step: StepListener | None = None,
     ) -> None:
         """Assemble a run.
 
@@ -348,6 +345,10 @@ class Controller:
             trace: Where each step is written as it completes. None means the
                 run leaves nothing behind, which is what a unit test wants and
                 what no real run should do.
+            on_step: Called with each step as it completes, for whoever is
+                watching the run happen. The loop knows nothing about what is
+                done with it -- a terminal line, a progress bar, a test's list
+                -- which is why it is a plain callback and not a display.
 
         Raises:
             ValueError: If neither ``config`` nor ``observe`` is given. A loop
@@ -371,6 +372,7 @@ class Controller:
         self._config = config
         self._observe_page = observe or self._really_observe
         self._trace = trace
+        self._on_step = on_step
 
         self._step = 0
         self._step_started_at = utc_now()
@@ -806,6 +808,13 @@ class Controller:
             # contract: when this returns, the step is on disk, so whatever
             # happens during the next one cannot take this one with it.
             self._trace.write_step(step)
+        if self._on_step is not None:
+            # Told now, for the same reason and to a different audience: a run
+            # that reports its steps only at the end is a run nobody can watch,
+            # and a step is at its most useful on screen while the next one is
+            # still being decided. After the trace write, so that anything the
+            # watcher is told about has already been recorded.
+            self._on_step(step)
 
 
 def _screenshot_bytes(observation: Observation) -> bytes | None:

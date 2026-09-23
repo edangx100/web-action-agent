@@ -1,0 +1,14 @@
+task:  how many records mention membership
+start: http://site.test/search.html
+
+  1  act    fill [7] searchbox "Search terms" with "membership" -> ok (0.00s)
+  2  act    press Enter -> ok (0.00s)
+  3  act    click [3] link "Browse the catalogue" -> ok (0.00s)
+  4  act    click [3] link "Browse the catalogue" -> ok (0.00s)
+  5  act    scroll down -> ok (0.00s) [forced: click 3 was proposed 3 times in a row; scroll down substituted to change the page]
+  6  done   success: 17 records
+
+6 calls, 5,544 tokens, unknown ($0.0000 known, 6 unpriced), 0.0s thinking
+trace: runs/RUN
+success in 6 steps: 17 records (exit 0)
+17 records

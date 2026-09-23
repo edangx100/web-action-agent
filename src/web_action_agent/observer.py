@@ -172,17 +172,32 @@ class Element:
     text: str
     box: Box
 
+    def label(self) -> str:
+        """Name this element the way every reader of a run refers to it.
+
+        The number alone is meaningless outside the observation that assigned
+        it -- ``element 4`` in a log tells a person nothing a week later, and
+        nothing at all if the page has changed since. The number *with* its
+        role and accessible name says what was clicked, which is the form a
+        terminal trace, a stored step, and this element's own prompt line all
+        need.
+
+        Returns:
+            str: The number, the role, and the name -- ``[3] link "Home"``.
+        """
+        return f'[{self.id}] {self.role} "{self.name}"'
+
     def describe(self) -> str:
         """Render this element as the single line the planner is shown.
 
         Returns:
-            str: The number, the role, and the name — ``[3] link "Home"`` — with
-            the element's current contents appended when they differ from the
-            name, as ``[6] searchbox "Search terms" = "rust"``. Rendering lives
-            here so that the prompt, the trace, and a debugging print cannot
-            drift into describing the same element three ways.
+            str: :meth:`label`, with the element's current contents appended
+            when they differ from the name, as
+            ``[6] searchbox "Search terms" = "rust"``. Rendering lives here so
+            that the prompt, the trace, and a debugging print cannot drift into
+            describing the same element three ways.
         """
-        line = f'[{self.id}] {self.role} "{self.name}"'
+        line = self.label()
         if self.text and self.text != self.name:
             line += f' = "{self.text}"'
         return line
