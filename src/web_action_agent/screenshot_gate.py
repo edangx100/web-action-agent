@@ -51,6 +51,7 @@ grounds — without re-running anything or reasoning backwards from a total.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -124,6 +125,32 @@ class GateDecision:
             "element_count": self.element_count,
             "dom_failures": self.dom_failures,
         }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> GateDecision:
+        """Rebuild one decision from the plain data of a trace.
+
+        The inverse of :meth:`to_dict`. Every field is required: the whole
+        point of recording a decision is that a reader can see the grounds, and
+        a decision rebuilt with its counts guessed at would be evidence of
+        nothing.
+
+        Args:
+            data: One decision, as written by :meth:`to_dict`.
+
+        Returns:
+            GateDecision: The same value the trace was written from.
+
+        Raises:
+            KeyError: If any field is missing.
+        """
+        return cls(
+            send_screenshot=data["send_screenshot"],
+            trigger=data["trigger"],
+            detail=data["detail"],
+            element_count=data["element_count"],
+            dom_failures=data["dom_failures"],
+        )
 
 
 class ScreenshotGate:

@@ -45,7 +45,7 @@ what turns "the agent went quiet for a step" into a line in the trace.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from typing import Any, Self
@@ -200,6 +200,28 @@ class BrowserEvent:
             dict[str, Any]: JSON-safe values, under the same keys every time.
         """
         return {"kind": self.kind, "detail": self.detail, "url": self.url}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> BrowserEvent:
+        """Rebuild one event from the plain data of a trace.
+
+        The inverse of :meth:`to_dict`, and written here beside it so the two
+        cannot drift: a reader that knew the shape of this record separately
+        would be a second place to update when the record changes, and the
+        kind that is only found wrong months later.
+
+        Args:
+            data: One event, as written by :meth:`to_dict`.
+
+        Returns:
+            BrowserEvent: The same value the trace was written from.
+
+        Raises:
+            KeyError: If ``kind`` or ``detail`` is missing. Both are always
+                written, so a record without them is a corrupt one and worth
+                failing on rather than filling in.
+        """
+        return cls(kind=data["kind"], detail=data["detail"], url=data.get("url", ""))
 
 
 class TaskSession:

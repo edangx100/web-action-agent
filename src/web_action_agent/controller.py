@@ -38,14 +38,14 @@ memory.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 from playwright.sync_api import Error as BrowserFailure
 
-from .actions import Action, Done, Navigate, Scroll, UseSkill
+from .actions import Action, Done, Navigate, Scroll, UseSkill, parse_action
 from .config import Config
 from .cost import RunCost, total_cost
 from .executor import NAVIGATION_ERROR, TIMEOUT, ExecutionResult, Executor
@@ -223,6 +223,50 @@ class StepReport:
                 for record in self.records
             ],
         }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> StepReport:
+        """Rebuild one step from the plain data of a run's action log.
+
+        The inverse of :meth:`to_dict`, and assembled the same way: each part is
+        rebuilt by whichever component owns it, so a step read back agrees with
+        the step written out by construction rather than by two pieces of code
+        being kept in step.
+
+        Args:
+            data: One record, as the action log stores it.
+
+        Returns:
+            StepReport: The same step the trace was written from.
+
+        Raises:
+            KeyError: If the record is missing a field that is always written.
+                The timestamps and the id are among them, which is the point:
+                a step that cannot say when it happened is one the schema was
+                written to refuse.
+            ActionError: If a stored action does not fit the action schema.
+            ValueError: If the record is not a step at all.
+        """
+        action = data.get("action")
+        result = data.get("result")
+        gate = data.get("screenshot_decision")
+        return cls(
+            step_id=data["step_id"],
+            started_at=data["started_at"],
+            ended_at=data["ended_at"],
+            number=data["number"],
+            observation=Observation.from_dict(data["observation"]),
+            # The three optional parts are optional in the run, not just in the
+            # record: a step whose every attempt was refused chose no action,
+            # and the final `done` is never handed to the browser.
+            action=parse_action(action) if action else None,
+            result=ExecutionResult.from_dict(result) if result else None,
+            attempts=data.get("attempts", 1),
+            rejections=tuple(Rejection.from_dict(item) for item in data.get("rejections", ())),
+            forced=data.get("forced", ""),
+            gate=GateDecision.from_dict(gate) if gate else None,
+            records=tuple(CallRecord.from_dict(call) for call in data.get("calls", ())),
+        )
 
 
 @dataclass(frozen=True)

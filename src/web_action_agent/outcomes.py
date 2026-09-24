@@ -34,6 +34,7 @@ source.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -253,3 +254,33 @@ class RunOutcome:
             "reason": self.reason,
             "steps": self.steps,
         }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> RunOutcome:
+        """Rebuild one verdict from the plain data of a trace.
+
+        ``ok`` is deliberately not read back. It is written for the benefit of
+        a reader who should not have to know which categories count as success,
+        but here it is derived from the category -- and reading it would mean a
+        trace could assert a category and a contradicting ``ok``, leaving two
+        answers to the only question anybody asks of a run.
+
+        Args:
+            data: One outcome, as written by :meth:`to_dict`.
+
+        Returns:
+            RunOutcome: The same value the trace was written from.
+
+        Raises:
+            KeyError: If ``category`` is missing.
+            ValueError: If the category is not one a run can end in, which
+                :meth:`__post_init__` refuses for the same reason it refuses a
+                fresh one: a run in a category no table has a column for has,
+                for reporting purposes, not ended.
+        """
+        return cls(
+            category=data["category"],
+            answer=data.get("answer"),
+            reason=data.get("reason"),
+            steps=data.get("steps", 0),
+        )

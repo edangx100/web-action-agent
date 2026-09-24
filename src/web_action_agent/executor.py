@@ -77,6 +77,7 @@ command, and the next observation shows what it did to the page.
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
@@ -85,7 +86,7 @@ from playwright.sync_api import Error as BrowserFailure
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as BrowserTimeout
 
-from .actions import Action, Click, Done, Fill, Navigate, Press, Scroll, UseSkill
+from .actions import Action, Click, Done, Fill, Navigate, Press, Scroll, UseSkill, parse_action
 from .browser import ACTION_TIMEOUT_S, BrowserEvent, TaskSession
 from .observation import Observation
 from .observer import ELEMENT_MARK
@@ -308,6 +309,36 @@ class ExecutionResult:
             "waited_s": round(self.waited_s, 3),
             "events": [event.to_dict() for event in self.events],
         }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ExecutionResult:
+        """Rebuild one result from the plain data of a trace.
+
+        The inverse of :meth:`to_dict`. The action is read back through
+        :func:`~web_action_agent.actions.parse_action`, the same function the
+        planner's reply goes through, so a stored action is checked against the
+        schema exactly as a fresh one is -- a trace holding an action the agent
+        could never have produced fails here rather than being replayed.
+
+        Args:
+            data: One result, as written by :meth:`to_dict`.
+
+        Returns:
+            ExecutionResult: The same value the trace was written from.
+
+        Raises:
+            KeyError: If ``action`` or ``status`` is missing.
+            ActionError: If the stored action does not fit the action schema.
+        """
+        return cls(
+            action=parse_action(data["action"]),
+            status=data["status"],
+            detail=data.get("detail", ""),
+            url=data.get("url", ""),
+            elapsed_s=data.get("elapsed_s", 0.0),
+            waited_s=data.get("waited_s", 0.0),
+            events=tuple(BrowserEvent.from_dict(event) for event in data.get("events", ())),
+        )
 
 
 class Executor:

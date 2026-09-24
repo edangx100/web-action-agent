@@ -198,6 +198,26 @@ class Rejection:
         """
         return {"code": self.code, "detail": self.detail, "cause": self.cause}
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Rejection:
+        """Rebuild one rejection from the plain data of a trace.
+
+        The inverse of :meth:`to_dict`, written beside it so a reader of a run
+        cannot come to disagree with its writer about what a refusal looks
+        like.
+
+        Args:
+            data: One rejection, as written by :meth:`to_dict`.
+
+        Returns:
+            Rejection: The same value the trace was written from.
+
+        Raises:
+            KeyError: If ``code`` or ``detail`` is missing. Both are always
+                written, and a refusal with no code is one no table can count.
+        """
+        return cls(code=data["code"], detail=data["detail"], cause=data.get("cause"))
+
 
 @dataclass(frozen=True)
 class Verdict:

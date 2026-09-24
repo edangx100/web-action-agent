@@ -575,6 +575,27 @@ class BackoffEvent:
             "asked_s": self.asked_s,
         }
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> BackoffEvent:
+        """Rebuild one pause from the plain data of a trace.
+
+        Args:
+            data: One pause, as written by :meth:`to_dict`.
+
+        Returns:
+            BackoffEvent: The same value the trace was written from, to the
+            millisecond that ``to_dict`` rounded it to.
+
+        Raises:
+            KeyError: If ``attempt``, ``status`` or ``waited_s`` is missing.
+        """
+        return cls(
+            attempt=data["attempt"],
+            status=data["status"],
+            waited_s=data["waited_s"],
+            asked_s=data.get("asked_s"),
+        )
+
 
 @dataclass(frozen=True)
 class Backoff:
@@ -722,6 +743,45 @@ class CallRecord:
     cost_usd: float | None = None
     schema_enforced: bool = False
     backoffs: tuple[BackoffEvent, ...] = ()
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> CallRecord:
+        """Rebuild one call's record from the plain data of a trace.
+
+        Written as the inverse of how the trace stores a call, which is
+        ``dataclasses.asdict`` plus the parent step's id stamped on by the step
+        itself. That extra key is ignored here: it says which step the call
+        belongs to, which is a fact about the *trace* rather than about the
+        call, and the reader puts calls back under their steps by reading the
+        steps rather than by trusting each call's word for it.
+
+        Args:
+            data: One call record, as the action log and the cost log store it.
+
+        Returns:
+            CallRecord: The same value the trace was written from.
+
+        Raises:
+            KeyError: If any of the fields a record always carries is missing --
+                its id, its two timestamps, the profile and model that served
+                it, or its latency. A call that cannot say when it happened is
+                exactly what the trace schema exists to refuse.
+        """
+        return cls(
+            call_id=data["call_id"],
+            started_at=data["started_at"],
+            ended_at=data["ended_at"],
+            profile=data["profile"],
+            model=data["model"],
+            vision=data.get("vision", False),
+            prompt_tokens=data.get("prompt_tokens"),
+            completion_tokens=data.get("completion_tokens"),
+            latency_s=data["latency_s"],
+            finish_reason=data.get("finish_reason"),
+            cost_usd=data.get("cost_usd"),
+            schema_enforced=data.get("schema_enforced", False),
+            backoffs=tuple(BackoffEvent.from_dict(event) for event in data.get("backoffs", ())),
+        )
 
     @property
     def waited_s(self) -> float:
