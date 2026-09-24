@@ -132,7 +132,11 @@
         },
         "screenshot": {
           "type": ["string", "null"],
-          "description": "Path to this step's annotated screenshot, or null when the step carried no image."
+          "description": "Path to the annotated screenshot this step carried into the prompt, or null when the cost gate kept it out or the endpoint cannot see images. Null here is not a claim that no image was taken -- see screenshot_on_disk."
+        },
+        "screenshot_on_disk": {
+          "type": ["string", "null"],
+          "description": "Path to this step's annotated screenshot, whether or not it went to the model. The one a person opens when reading the run afterwards, and written on every step of every run that had somewhere to put an image -- including runs against an endpoint that cannot see at all. Absent in traces written before the two were told apart."
         }
       }
     },

@@ -255,6 +255,7 @@ class TraceWriter:
         task: str,
         start_url: str,
         config: Config | None = None,
+        text_only: bool = False,
     ) -> TraceWriter:
         """Open a run folder and write what is already known about the run.
 
@@ -270,6 +271,12 @@ class TraceWriter:
             config: The run's resolved settings. None for a test or a caller
                 with no config, which leaves ``config.json`` unwritten rather
                 than writing an empty one that would read as "no settings".
+            text_only: Whether the run's endpoint serves no vision model, so no
+                step could carry an image to it. Stated once here rather than
+                left to be inferred from every step's screenshot trigger --
+                and worth stating at all because the folder still holds a
+                picture of every step, so its screenshots are no evidence
+                either way about what the model was shown.
 
         Returns:
             TraceWriter: A writer ready to take steps.
@@ -290,6 +297,10 @@ class TraceWriter:
                 # Two files calling two different moments "started_at" would be
                 # a small lie that a timeline would inherit.
                 "opened_at": writer.opened_at,
+                # Not a setting, which is why it is here and not in
+                # `config.json`: it is a fact about the endpoint the run was
+                # pointed at.
+                "text_only": text_only,
                 "schema": SCHEMA_PATH.name,
             },
         )

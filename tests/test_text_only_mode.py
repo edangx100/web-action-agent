@@ -19,28 +19,40 @@ So it is defended here in one file, at every layer that could break it:
 * the **wire**, where the finished request must contain no image part and must
   have gone to the text route.
 
-Two things this file deliberately does *not* claim. It does not test that the
-run's trace still keeps a screenshot of every step for a human to review — the
-trace writer does not exist yet, and asserting on it here would be asserting on
-nothing. And it does not test a whole task end to end, for the same reason:
-there is no loop yet to run one through. What is here is every layer that
-currently exists, so the guarantee is held at each of them independently.
+* and finally the **whole task**, run end to end against a real browser and the
+  practice site under a profile that cannot see, checking both halves of the
+  promise at once: no image left the process, and the run folder still holds a
+  picture of every step.
 
-Everything runs offline against a stub transport. A real call would need a key,
-a network and money, and would tell us nothing about our own code that the stub
-does not.
+That last one is the half most easily lost, and it is worth stating plainly
+because the obvious implementation gets it backwards. "Send no screenshots"
+sounds like it means "take no screenshots", and a gate that decides both at once
+would make a text-only run leave no visual record at all — so the mode that most
+needs a human to look at what happened would be the one mode that saved nothing
+for them to look at. Photographing and sending are two decisions, and
+:func:`~web_action_agent.observation.capture` keeps them apart.
+
+Everything but the end-to-end test runs offline against a stub transport. A real
+call would need a key, a network and money, and would tell us nothing about our
+own code that the stub does not.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from web_action_agent.allowlist import Allowlist
+from web_action_agent.browser import BrowserProcess, BrowserSettings
 from web_action_agent.capabilities import AGENT, VISION, report_capabilities
 from web_action_agent.config import Config
+from web_action_agent.controller import Controller
+from web_action_agent.executor import Executor
+from web_action_agent.memory import Memory
 from web_action_agent.model_client import (
     ModelClient,
     ModelClientError,
@@ -50,9 +62,12 @@ from web_action_agent.model_client import (
     system_message,
     user_message,
 )
-from web_action_agent.observation import Observation
+from web_action_agent.observation import Observation, capture
 from web_action_agent.observer import Box, Element
+from web_action_agent.planner import Planner
 from web_action_agent.screenshot_gate import TRIGGER_NO_VISION_ROUTE, ScreenshotGate
+from web_action_agent.trace import RUN_FILE, TraceWriter
+from web_action_agent.validator import Validator
 
 #: The shipped profile that serves no vision model. Using the real one rather
 #: than a hand-built stand-in is the point: if someone ever gives ``local`` a
@@ -65,6 +80,10 @@ VISION_PROFILE = "openrouter"
 #: Stand-in for an annotated screenshot. Nothing decodes it, so its only job is
 #: to be bytes that are recognisably not text.
 A_PNG = b"\x89PNG\r\n\x1a\n fake bytes"
+
+#: The task the end-to-end run is given, answerable from the practice site's
+#: text alone -- which is the point, since the model cannot see the page.
+TASK = "how many records mention membership"
 
 
 class StubTransport:
@@ -110,6 +129,43 @@ class StubTransport:
         """
         assert len(self.requests) == 1, f"expected one call, saw {len(self.requests)}"
         return self.requests[0]
+
+
+class ScriptedEndpoint(StubTransport):
+    """A recording transport that answers with real actions instead of one.
+
+    :class:`StubTransport` always replies ``done``, which is right for the tests
+    that make a single call and read the request back. A whole run needs the
+    planner to be led through several steps, so this adds the script while
+    keeping the recording -- the requests are still what the guarantee is
+    checked against.
+    """
+
+    def __init__(self, *replies: str) -> None:
+        """Set up the script.
+
+        Args:
+            *replies: Message contents to return, one per call, the last
+                repeating if the run asks more often than the script provides.
+        """
+        super().__init__()
+        self._replies = list(replies)
+
+    def _create(self, **request: Any) -> SimpleNamespace:
+        """Record a request and answer with the next scripted action.
+
+        Args:
+            **request: The keyword arguments the client passed.
+
+        Returns:
+            SimpleNamespace: A response shaped like the SDK's.
+        """
+        self.requests.append(request)
+        reply = self._replies[min(len(self.requests) - 1, len(self._replies) - 1)]
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=reply), finish_reason="stop")],
+            usage=SimpleNamespace(prompt_tokens=900, completion_tokens=20),
+        )
 
 
 def profile(name: str) -> Profile:
@@ -444,3 +500,181 @@ def test_a_screenshot_on_disk_is_a_different_fact_from_one_in_the_prompt() -> No
     # The channels the planner actually read are identical either way.
     assert captured.elements == sent.elements
     assert captured.text == sent.text
+
+
+# --- The whole task, on an endpoint that cannot see -------------------------
+
+
+@pytest.mark.mock_llm
+def test_a_whole_run_on_a_blind_endpoint_finishes_and_still_leaves_its_pictures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    playwright: Any,
+    fixture_site: Any,
+) -> None:
+    """Both halves of the promise, checked on one real run.
+
+    Everything above tests a layer. This tests the *system*: a real Chromium on
+    the practice site, a real form filled in and submitted, the real loop, the
+    real trace writer — with the one profile that serves no vision model.
+
+    Three things have to be true at once, and the third is the one that the
+    obvious implementation loses:
+
+    1. the run finishes the task, on the two text channels alone;
+    2. nothing image-shaped left the process, on any step;
+    3. the run folder still holds an annotated screenshot of every step.
+
+    A run that satisfied the first two and not the third would look entirely
+    correct from the outside, and would have quietly made the mode that most
+    needs review the one mode with nothing to review.
+    """
+    transport = ScriptedEndpoint(
+        '{"action": "fill", "element_id": 7, "text": "membership"}',
+        '{"action": "press", "key": "Enter"}',
+        '{"action": "done", "status": "success", "answer": "17 records"}',
+    )
+    start = fixture_site.url_for("search.html")
+    config = Config(start_url=start)
+    client = ModelClient(profile(TEXT_ONLY_PROFILE), transport=transport, env={})
+    # The premise of the whole test. Asserted rather than assumed, because if
+    # `local` ever gained a vision route this test would keep passing while
+    # testing nothing.
+    assert client.supports_vision is False
+
+    trace = TraceWriter.open(
+        tmp_path / "run",
+        task=TASK,
+        start_url=start,
+        config=config,
+        text_only=not client.supports_vision,
+    )
+    starts_its_own = BrowserProcess
+    with (
+        starts_its_own(BrowserSettings.from_config(config), playwright=playwright) as browser,
+        browser.task_session() as session,
+    ):
+        controller = Controller(
+            planner=Planner(client),
+            validator=Validator(Allowlist.derive(start)),
+            executor=Executor(session, action_timeout_s=config.action_timeout_s),
+            memory=Memory.from_config(config),
+            max_steps=config.max_steps,
+            retry_budget=config.retry_budget,
+            gate=ScreenshotGate.from_config(config, supports_vision=client.supports_vision),
+            screenshot_dir=trace.screenshot_dir,
+            config=config,
+            trace=trace,
+        )
+        report = controller.run(TASK, start_url=start)
+
+    # 1. It finished.
+    assert report.outcome.ok, report.summary()
+    assert report.outcome.answer == "17 records"
+
+    # 2. Nothing image-shaped reached the wire, and nothing was even offered:
+    # `dropped_screenshots` counts images the client had to throw away, so zero
+    # means the gate did its job rather than the client covering for it.
+    assert transport.requests, "the planner really was asked"
+    text_model = profile(TEXT_ONLY_PROFILE).text.model
+    for request in transport.requests:
+        assert has_image(request["messages"]) is False
+        assert request["model"] == text_model
+    assert client.dropped_screenshots == 0
+    assert all(step.observation.screenshot is None for step in report.steps)
+    assert all(
+        step.gate is not None and step.gate.trigger == TRIGGER_NO_VISION_ROUTE
+        for step in report.steps
+    )
+
+    # 3. And the pictures are there anyway, one per step, each a real PNG.
+    for step in report.steps:
+        image = step.observation.screenshot_on_disk
+        assert image is not None, f"step {step.number} left no picture to review"
+        assert image.is_file() and image.read_bytes().startswith(b"\x89PNG")
+        assert image.parent == trace.screenshot_dir
+
+    # Which is exactly why the folder has to say so in words: its screenshots
+    # look the same either way, so they are no evidence about what the model was
+    # shown, and a reader would otherwise have to deduce the mode from every
+    # step's trigger.
+    described = json.loads((trace.folder / RUN_FILE).read_text(encoding="utf-8"))
+    assert described["text_only"] is True
+
+
+@pytest.mark.fixture
+def test_the_same_page_is_photographed_either_way_and_sent_only_one_way(
+    page: Any,
+    fixture_site: Any,
+    tmp_path: Path,
+) -> None:
+    """The split itself, on one real page looked at twice.
+
+    Same page, same capture, two gates: one wired to an endpoint that can see
+    and one to an endpoint that cannot. The file on disk is written both times
+    — that is the record, and it does not depend on who is reading it — while
+    only the seeing endpoint's observation carries it into the prompt.
+
+    Asserted as a contrast rather than two separate tests because the claim is
+    about the *difference* between the two modes, and a pair of tests each
+    checking one mode could both pass while the difference had collapsed.
+    """
+    page.goto(fixture_site.url_for("search.html"))
+    config = Config()
+
+    blind, blind_decision = capture(
+        page,
+        config=config,
+        gate=gate_for(TEXT_ONLY_PROFILE),
+        screenshot_dir=tmp_path / "blind",
+        label="step-01",
+    )
+    seeing, seeing_decision = capture(
+        page,
+        config=config,
+        # Forced open by asking for more elements than the page has, so the
+        # contrast is about vision rather than about the cost heuristics.
+        gate=gate_for(VISION_PROFILE, min_elements=1000),
+        screenshot_dir=tmp_path / "seeing",
+        label="step-01",
+    )
+
+    # The record: both runs leave a real picture for a person to look at.
+    for observation in (blind, seeing):
+        assert observation.screenshot_on_disk is not None
+        assert observation.screenshot_on_disk.is_file()
+        assert observation.screenshot_on_disk.read_bytes().startswith(b"\x89PNG")
+
+    # The prompt: only the endpoint that can read one is given one.
+    assert blind_decision.send_screenshot is False
+    assert blind_decision.trigger == TRIGGER_NO_VISION_ROUTE
+    assert blind.screenshot is None
+    assert seeing_decision.send_screenshot is True
+    assert seeing.screenshot == seeing.screenshot_on_disk
+
+    # And the text channels are the same either way, which is what makes the
+    # blind run a complete run rather than a crippled one.
+    assert blind.elements == seeing.elements
+    assert blind.text == seeing.text
+
+
+@pytest.mark.unit
+def test_the_picture_in_a_prompt_is_never_a_different_one_from_the_record() -> None:
+    """An observation carries at most one image, under two names.
+
+    ``screenshot`` is either empty or the very same file as
+    ``screenshot_on_disk``. If the two could name different images, the trace
+    would say the model saw a page it did not, and every later reading of that
+    run would be wrong in a way nothing could detect.
+    """
+    on_disk = Path("runs/example/screenshots/step-01.png")
+
+    sent = Observation(
+        url="u", title="t", elements=(), text="x", screenshot=on_disk, screenshot_on_disk=on_disk
+    )
+    kept = Observation(url="u", title="t", elements=(), text="x", screenshot_on_disk=on_disk)
+
+    for observation in (sent, kept):
+        assert observation.screenshot in (None, observation.screenshot_on_disk)
+    assert sent.has_screenshot is True
+    assert kept.has_screenshot is False, "on disk is not the same as in the prompt"

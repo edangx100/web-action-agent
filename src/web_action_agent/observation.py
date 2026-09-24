@@ -107,9 +107,20 @@ class Observation:
         screenshot: Where the annotated screenshot for this step is, when one
             forms part of this observation, and ``None`` when the cost gate
             kept it out or no vision-capable model is configured. ``None`` here
-            does not mean no image exists — the run's trace keeps its own
-            screenshot of every step for a human to look at afterwards. It
-            means this observation does not carry one.
+            does not mean no image exists — see ``screenshot_on_disk``. It
+            means this observation does not carry one *to the model*.
+        screenshot_on_disk: Where this step's annotated screenshot is, whether
+            or not it went to the model. This is the one a person opens when
+            they are reading the run afterwards, and it is written on every
+            step that had somewhere to put an image — including every step of a
+            run against an endpoint that cannot see at all.
+
+            The two fields are separate because they answer two different
+            questions, and collapsing them is how a run loses its evidence: the
+            prompt channel is a *cost* decision about what the model is worth
+            being shown, while the file on disk is a *record* for whoever is
+            reading the run later. When the gate says yes they hold the same
+            path; when it says no, only this one is set.
     """
 
     url: str
@@ -118,6 +129,7 @@ class Observation:
     text: str
     text_truncated: bool = False
     screenshot: Path | None = None
+    screenshot_on_disk: Path | None = None
 
     @property
     def has_screenshot(self) -> bool:
@@ -164,6 +176,11 @@ class Observation:
             412 chars of text, no screenshot``. Text is measured in characters
             rather than tokens because characters need no model to count and
             no dependency to explain.
+
+            ``no screenshot`` describes the *channels the model was given*,
+            which is what this line is about. It is not a claim that none was
+            taken: ``screenshot_on_disk`` usually names one, and the full
+            observation written beside this line carries both.
         """
         text_size = f"{len(self.text)} chars of text"
         if self.text_truncated:
@@ -192,6 +209,9 @@ class Observation:
             "text": self.text,
             "text_truncated": self.text_truncated,
             "screenshot": str(self.screenshot) if self.screenshot else None,
+            "screenshot_on_disk": (
+                str(self.screenshot_on_disk) if self.screenshot_on_disk else None
+            ),
         }
 
     @classmethod
@@ -216,9 +236,17 @@ class Observation:
                 missing.
         """
         # A missing key, an explicit null and an empty string all mean the same
-        # thing here -- this observation carried no image -- so all three are
-        # read the same way rather than one of them becoming Path("").
+        # thing here -- there is no image -- so all three are read the same way
+        # rather than one of them becoming Path("").
         screenshot = data.get("screenshot")
+        # Read exactly as written, with no guessing from the other field. It is
+        # tempting to fall back to `screenshot` for a trace written before the
+        # two were told apart -- the file it names really is on disk -- but that
+        # would make this no longer the inverse of `to_dict`, and a reader that
+        # quietly improves on its input is a reader nobody can check. A trace
+        # that predates the split still names its image in `screenshot`, which
+        # is where a reader of such a trace would look anyway.
+        on_disk = data.get("screenshot_on_disk")
         return cls(
             url=data["url"],
             title=data["title"],
@@ -226,6 +254,7 @@ class Observation:
             text=data["text"],
             text_truncated=data.get("text_truncated", False),
             screenshot=Path(screenshot) if screenshot else None,
+            screenshot_on_disk=Path(on_disk) if on_disk else None,
         )
 
 
@@ -243,20 +272,25 @@ def capture(
     decides from how many there are, and the annotated screenshot needs them to
     know what to number. The text extract is independent and always taken.
 
-    An image is produced only when all three of these hold: a gate was given, it
-    says yes for this page, and somewhere was given to put the file. Any one of
-    them missing means a text-only observation -- which is a complete
-    observation, not a degraded one. Nothing in this agent may depend on there
-    being a picture.
+    **Photographing and sending are two decisions, and this is where they are
+    kept apart.** An image is written to disk whenever ``screenshot_dir`` says
+    where -- every step, so the run folder holds a picture of each one for a
+    person to review afterwards. It is carried *into the prompt* only when the
+    gate also says yes, which it never does for a run whose endpoint cannot see
+    images. So a text-only run leaves a complete visual record and sends none of
+    it, and an observation with no ``screenshot`` is a complete observation
+    rather than a degraded one. Nothing in this agent may depend on there being
+    a picture in the prompt.
 
     Args:
         page: The page to look at. The *active* page: after a click opened a
             tab, that is the tab, which is why callers ask the executor for it
             rather than remembering one.
         config: The run's settings, for the text budget and the viewport.
-        gate: The run's screenshot gate, or None to take no screenshot at all.
-        screenshot_dir: Where to write the annotated image, or None for the
-            same. Created if it does not exist.
+        gate: The run's screenshot gate, or None to send no screenshot to the
+            model. An image is still written to disk either way.
+        screenshot_dir: Where to write the annotated image, or None to take no
+            photograph at all. Created if it does not exist.
         label: Filename stem for this step's image, e.g. ``step-04``.
 
     Returns:
@@ -276,9 +310,20 @@ def capture(
     distilled = distill_from_config(page, config)
     decision = gate.decide(element_count=len(elements)) if gate else None
 
-    screenshot: Path | None = None
-    if decision is not None and decision.send_screenshot and screenshot_dir is not None:
-        screenshot = _annotated_screenshot(page, elements, screenshot_dir, label)
+    # Photographed whenever there is somewhere to put it -- not only when the
+    # gate says yes. The run folder is supposed to hold one image per step for a
+    # person to review, and that is a different question from whether the model
+    # is worth being shown one. Tying them together is what would make a run
+    # against an endpoint that cannot see leave no pictures at all.
+    on_disk: Path | None = None
+    if screenshot_dir is not None:
+        on_disk = _annotated_screenshot(page, elements, screenshot_dir, label)
+
+    # ...and carried into the prompt only when the gate says so. This is the
+    # line the vision guarantee rests on: the gate answers "no" for every step
+    # of a text-only run, so `screenshot` stays None and nothing downstream has
+    # an image to send.
+    in_prompt = on_disk if decision is not None and decision.send_screenshot else None
 
     return (
         Observation(
@@ -287,7 +332,8 @@ def capture(
             elements=elements,
             text=distilled.text,
             text_truncated=distilled.truncated,
-            screenshot=screenshot,
+            screenshot=in_prompt,
+            screenshot_on_disk=on_disk,
         ),
         decision,
     )

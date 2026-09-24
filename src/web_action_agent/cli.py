@@ -209,7 +209,17 @@ def _do_one_task(config: Config, task: str) -> int:
         # whose folder cannot be written is a run that would produce no
         # evidence, and finding that out after paying for twenty model calls
         # would be finding it out too late.
-        trace = TraceWriter.open(folder, task=task, start_url=config.start_url, config=config)
+        trace = TraceWriter.open(
+            folder,
+            task=task,
+            start_url=config.start_url,
+            config=config,
+            # A fact about the endpoint, not a setting, so the run folder is
+            # where it belongs: a reader of the trace should be told once that
+            # the model could not see, rather than deducing it from every
+            # step's screenshot trigger.
+            text_only=not client.supports_vision,
+        )
     except (ModelClientError, AllowlistError, TraceError) as error:
         # Nothing has been attempted and nothing spent: the fix is to the
         # configuration, which is what exit code 2 means.
