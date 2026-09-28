@@ -1,0 +1,8 @@
+{
+  "run_id": "run-46eee08b36a3",
+  "task": "find the record about membership and open it",
+  "start_url": "http://northgate.example/search.html",
+  "opened_at": "2026-09-28T14:19:38.134Z",
+  "text_only": true,
+  "schema": "action_log.schema.json"
+}
