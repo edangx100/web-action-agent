@@ -366,7 +366,17 @@ class Planner:
             recent = list(history)[-self._max_history :]
             blocks.append("# Recent steps\n" + "\n".join(recent))
         if skills:
-            blocks.append("# Skills available for this site\n" + "\n".join(skills))
+            # The one line of instruction is here rather than in the system
+            # prompt because it only makes sense next to a list: a model told
+            # in advance how to invoke skills, on a run where none were
+            # retrieved, is a model that has been invited to invent one.
+            blocks.append(
+                "# Skills available for this site\n"
+                "Routines already proved to work here. Invoke one with "
+                "`use_skill`, giving every value it asks for; values in square "
+                "brackets are optional. Prefer one over working the same route "
+                "out step by step.\n" + "\n".join(skills)
+            )
 
         blocks.append(self.render_observation(observation))
 
