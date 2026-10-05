@@ -193,7 +193,7 @@ def test_shipped_profiles_cover_the_three_documented_run_modes() -> None:
 def test_a_profile_the_code_has_never_seen_behaves_identically(tmp_path: Path) -> None:
     """Switching endpoints is data, not code — proven with an unknown name.
 
-    This is the load-bearing test of the whole module. A profile defined in a
+    This is the test the whole module rests on. A profile defined in a
     file written seconds ago, under a name nothing has been taught, must build
     a client exactly as the shipped ones do. Any ``if profile.name ==`` added
     outside the loader shows up here first.

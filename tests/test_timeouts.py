@@ -12,7 +12,7 @@ site was too slow", "the model endpoint was too slow" and "the whole task took
 too long" send whoever reads the results in three different directions, and one
 category called *timeout* would send them nowhere.
 
-Two testing decisions are load-bearing here:
+Two testing decisions matter more than the rest here:
 
 * **The run's clock is injected.** Otherwise a test of a five-minute ceiling
   takes five minutes, so it gets tested at one second and hoped about at five.

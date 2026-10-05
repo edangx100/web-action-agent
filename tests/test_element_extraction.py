@@ -1,6 +1,6 @@
 """What the agent is offered to act on, and what it is deliberately not.
 
-Two properties are load-bearing here, and neither shows itself as a failure
+Two properties carry the rest here, and neither shows itself as a failure
 where it is broken.
 
 **The right set.** An element wrongly offered becomes a step spent pressing

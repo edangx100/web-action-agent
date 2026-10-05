@@ -36,9 +36,9 @@ where nobody can say which earlier step was the one that doomed it.
 **Steps that failed are left out of the route.** A successful run may still
 contain a click that went nowhere before the agent found the way. Recording
 those would make a recipe that deliberately does things known not to work. What
-it cannot do is tell a *wasted* step from a step whose failure was load-bearing,
-so the pruning is reported rather than silent: the notes on the result say what
-was dropped and why.
+it cannot do is tell a *wasted* step from one whose failure still changed the
+page the later steps rely on, so the pruning is reported rather than silent:
+the notes on the result say what was dropped and why.
 
 **Nothing induced is trusted yet, and here is the reason it must not be.**
 What comes out is a *candidate*: schema-valid, with a verification block

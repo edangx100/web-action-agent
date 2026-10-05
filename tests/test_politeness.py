@@ -75,8 +75,8 @@ class Fetcher:
     """A stand-in for reading robots.txt, that counts what it was asked for.
 
     Attributes:
-        asked: Every URL requested, in order. The count is load-bearing in two
-            tests: rules must be fetched once per site, and not at all for a
+        asked: Every URL requested, in order. The count is what two tests
+            check: rules must be fetched once per site, and not at all for a
             site the run has already refused on other grounds.
     """
 
