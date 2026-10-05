@@ -72,6 +72,7 @@ from web_action_agent.outcomes import (
     VALIDATION_EXHAUSTED,
 )
 from web_action_agent.planner import PlannerDecision, PlannerFailure
+from web_action_agent.replay import Replay, ReplayedStep
 from web_action_agent.screenshot_gate import ScreenshotGate
 from web_action_agent.timeouts import RunBudget
 from web_action_agent.trace import new_id
@@ -661,10 +662,16 @@ def test_a_failed_skill_replay_hands_back_a_fresh_observation():
             observation: The page before the replay.
 
         Returns:
-            SimpleNamespace: A failed replay result.
+            Replay: A replay that got one step in and stopped.
         """
         replayed.append(action.skill)
-        return SimpleNamespace(ok=False, detail="step 2 of the skill found no search box")
+        return Replay(
+            skill=action.skill,
+            steps=(ReplayedStep(1, "fill the search box", ok=True),),
+            total=3,
+            ok=False,
+            detail="step 2: no element matched",
+        )
 
     class Library:
         """A one-skill library, so the validator permits use_skill."""
@@ -704,7 +711,15 @@ def test_a_failed_skill_replay_hands_back_a_fresh_observation():
     # that follows ends the run without looking again, which is right: nothing
     # is decided from a page after the run is over.
     assert looks == ["step-00", "step-01"]
-    assert report.steps[0].forced == "step 2 of the skill found no search box"
+    # The replay has a field of its own rather than borrowing `forced`, which
+    # means a trace can say where the planner took over instead of only that it
+    # did -- and the progress already made is kept rather than written off.
+    handed_over = report.steps[0].replay
+    assert handed_over is not None
+    assert handed_over.ok is False
+    assert handed_over.completed == 1, "the first step really happened"
+    assert handed_over.handover == 2, "and the planner picks up at the second"
+    assert report.steps[0].forced == "", "a replay is not a substituted action"
     assert report.outcome.ok, "the run carried on and finished"
 
 

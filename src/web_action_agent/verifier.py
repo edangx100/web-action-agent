@@ -52,21 +52,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .actions import Action, Click, Fill, Navigate, Press, Scroll
+from .actions import Navigate
 from .config import Config
 from .executor import Executor
 from .model_client import CallRecord, ModelClient, ModelClientError, system_message
-from .observation import Observation, capture
-from .reporting import describe_action
-from .selectors import Resolution, resolve
+from .observation import Observation
+from .replay import SkillReplayer
+from .selectors import Resolution
 from .skill_schema import (
-    ClickStep,
-    FillStep,
-    NavigateStep,
-    PressStep,
-    ScrollStep,
     Skill,
-    SkillStep,
     placeholders_in,
 )
 from .validator import Validator
@@ -240,31 +234,6 @@ def _system_prompt(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def fill_in(step: SkillStep, params: dict[str, str]) -> SkillStep:
-    """Put the parameter values into one stored step.
-
-    Args:
-        step: The stored step, with ``{name}`` where values go.
-        params: The values to use.
-
-    Returns:
-        SkillStep: The same step with its placeholders replaced. Steps that
-        carry no text come back unchanged, which is most of them.
-
-    Raises:
-        VerificationError: If the step refers to a parameter no value was given
-            for. The skill format already refuses a placeholder the skill does
-            not declare, so reaching this means the *caller* supplied an
-            incomplete set -- worth refusing over, because the alternative is
-            typing the literal text ``{query}`` into a search box.
-    """
-    if isinstance(step, FillStep):
-        return step.model_copy(update={"text": _substitute(step.text, params)})
-    if isinstance(step, NavigateStep):
-        return step.model_copy(update={"url": _substitute(step.url, params)})
-    return step
-
-
 class SkillVerifier:
     """Replays a candidate with different values, and asks whether it worked.
 
@@ -306,11 +275,17 @@ class SkillVerifier:
                 ones.
         """
         self._executor = executor
-        self._validator = validator
-        self._config = config
         self._judge = judge
-        self._screenshot_dir = screenshot_dir
         self._prompt_path = prompt_path or PROMPT_PATH
+        # The same replayer the agent itself uses. A candidate checked through
+        # one path and replayed through another would be a candidate checked
+        # for something other than what will happen to it.
+        self._replayer = SkillReplayer(
+            executor=executor,
+            validator=validator,
+            config=config,
+            screenshot_dir=screenshot_dir,
+        )
 
     @property
     def system_prompt(self) -> str:
@@ -346,12 +321,18 @@ class SkillVerifier:
                 f"({arrival.detail or arrival.status})"
             )
 
-        replayed, failure = self._replay(skill, params)
-        if failure is not None:
+        replay = self._replayer.run(skill, params)
+        replayed = tuple(
+            StepReplay(step.number, step.described, step.resolution, step.ok, step.detail)
+            for step in replay.steps
+        )
+        if not replay.ok:
             # No judge call. A recipe whose steps did not run is not a recipe
             # whose destination is worth an opinion, and most bad candidates
             # end here.
-            return Verification(passed=False, layer=STRUCTURAL, reason=failure, replayed=replayed)
+            return Verification(
+                passed=False, layer=STRUCTURAL, reason=replay.detail, replayed=replayed
+            )
 
         if self._judge is None:
             return Verification(
@@ -360,122 +341,6 @@ class SkillVerifier:
                 replayed=replayed,
             )
         return self._ask_the_judge(skill, params, replayed)
-
-    def _replay(
-        self, skill: Skill, params: dict[str, str]
-    ) -> tuple[tuple[StepReplay, ...], str | None]:
-        """Run every step with the alternate values, stopping at the first failure.
-
-        Stopping rather than carrying on is deliberate. Once a step has not
-        happened, every later step is being attempted from a page the recipe
-        did not expect, and their failures say nothing about the recipe -- they
-        say the run went off the rails two steps ago, which is already known.
-
-        Args:
-            skill: The candidate.
-            params: The alternate values.
-
-        Returns:
-            tuple: Every step attempted, and the reason the replay stopped, or
-            None if all of them worked.
-        """
-        replayed: list[StepReplay] = []
-
-        for number, stored in enumerate(skill.steps, start=1):
-            step = fill_in(stored, params)
-            observation = self._look()
-            action, resolution = self._action_for(step, observation)
-
-            if action is None:
-                detail = (
-                    resolution.summary()
-                    if resolution
-                    else "the step could not be turned into an action"
-                )
-                replayed.append(
-                    StepReplay(number, step.describe(), resolution, ok=False, detail=detail)
-                )
-                return tuple(replayed), f"step {number} ({step.describe()}): {detail}"
-
-            described = describe_action(action, observation)
-            verdict = self._validator.check(action, observation)
-            if not verdict.ok:
-                # The gate refused a replayed action. Rare, and worth its own
-                # message: it means the skill wants to do something this run is
-                # not allowed to do, which is a different problem from an
-                # element being missing.
-                detail = verdict.summary()
-                replayed.append(StepReplay(number, described, resolution, ok=False, detail=detail))
-                return tuple(replayed), f"step {number} ({described}) was refused: {detail}"
-
-            result = self._executor.execute(verdict.action, observation=observation)
-            replayed.append(
-                StepReplay(
-                    number,
-                    described,
-                    resolution,
-                    ok=result.ok,
-                    detail="" if result.ok else result.summary(),
-                )
-            )
-            if not result.ok:
-                return tuple(replayed), f"step {number} ({described}) failed: {result.summary()}"
-
-        return tuple(replayed), None
-
-    def _action_for(
-        self, step: SkillStep, observation: Observation
-    ) -> tuple[Action | None, Resolution | None]:
-        """Turn one stored step into a concrete action against the page in front of it.
-
-        The step says "the button called Reserve"; the executor acts on numbers.
-        This is the join, and it is where a recipe that memorised its one
-        example comes apart: the element it names is not on a page reached with
-        different values, resolution finds nothing, and there is no action to
-        perform.
-
-        Args:
-            step: The step, with its parameters already filled in.
-            observation: The page as it is now.
-
-        Returns:
-            tuple: The action, or None when the element could not be found, and
-            the resolution that says why. The resolution is None for steps that
-            name no element.
-        """
-        if isinstance(step, PressStep):
-            return Press(action="press", key=step.key), None
-        if isinstance(step, ScrollStep):
-            return Scroll(action="scroll", direction=step.direction), None
-        if isinstance(step, NavigateStep):
-            return Navigate(action="navigate", url=step.url), None
-
-        resolution = resolve(step.selector, observation.elements)
-        if resolution.element is None:
-            return None, resolution
-        if isinstance(step, FillStep):
-            return Fill(action="fill", element_id=resolution.element.id, text=step.text), resolution
-        assert isinstance(step, ClickStep), "the five step kinds are covered above"
-        return Click(action="click", element_id=resolution.element.id), resolution
-
-    def _look(self) -> Observation:
-        """Take a fresh observation of whatever page the run is on now.
-
-        Fresh every step, not once at the start. Element numbers are assigned
-        per look, so an observation taken before a click describes a page that
-        no longer exists -- and resolving the next step against it would find
-        the right description at the wrong number.
-
-        Returns:
-            Observation: The current page.
-        """
-        observation, _ = capture(
-            self._executor.page,
-            config=self._config,
-            screenshot_dir=self._screenshot_dir,
-            label="verify",
-        )
-        return observation
 
     def _ask_the_judge(
         self, skill: Skill, params: dict[str, str], replayed: tuple[StepReplay, ...]
@@ -499,7 +364,10 @@ class SkillVerifier:
                 down.
         """
         assert self._judge is not None, "only called when a judge is configured"
-        final = self._look()
+        # The page the replay left the browser on. Taken through the same
+        # replayer the steps ran through, so the judge is shown the page
+        # the replay actually produced rather than a second opinion of it.
+        final = self._replayer.look()
         try:
             response = self._judge.complete(
                 [

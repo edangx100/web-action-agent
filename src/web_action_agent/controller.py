@@ -41,7 +41,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from playwright.sync_api import Error as BrowserFailure
 
@@ -61,6 +61,7 @@ from .outcomes import (
     RunOutcome,
 )
 from .planner import Planner, PlannerDecision
+from .replay import Replay
 from .reporting import StepListener, step_line
 from .screenshot_gate import GateDecision, ScreenshotGate
 from .timeouts import RunBudget
@@ -94,31 +95,17 @@ STUCK_NOTE = "repeated action"
 PageObserver = Callable[[str], tuple[Observation, "GateDecision | None"]]
 
 
-class SkillReplay(Protocol):
-    """Replaying a stored skill, for the run to fall back from.
-
-    Declared as a shape rather than imported, because the skill library does
-    not exist yet and this module should not have to change when it does. What
-    the controller needs of a replay is only this: do it, and tell me whether
-    it worked and in a few words what happened.
-    """
-
-    def __call__(self, action: UseSkill, observation: Observation) -> ReplayResult:
-        """Replay one skill against the current page."""
-        ...
-
-
-class ReplayResult(Protocol):
-    """What a replay reports back.
-
-    Attributes:
-        ok: Whether every step of the skill ran.
-        detail: What happened, in a few words -- for the trace, and for the
-            planner's history when control comes back to it.
-    """
-
-    ok: bool
-    detail: str
+#: Replaying a stored skill: run its steps against the page the run is on, and
+#: report how far it got. A plain callable rather than an interface, like the
+#: page observer above and for the same reason -- the loop decides *when* a
+#: skill is replayed and nothing else about it, and a replay that could only be
+#: tested with a browser and a library attached would be a handover whose
+#: branches mostly went untested.
+#:
+#: It was a structural type while no replay existed. It names the real result
+#: now, because one does: the controller writes the whole record into the step,
+#: so a trace can say where the planner took over rather than only that it did.
+SkillReplay = Callable[[UseSkill, Observation], "Replay"]
 
 
 @dataclass(frozen=True)
@@ -153,6 +140,11 @@ class StepReport:
             choice, so it is recorded rather than left to be inferred.
         gate: The screenshot decision for this step's observation, with the
             rule that made it.
+        replay: What came of replaying a stored skill, when this step was a
+            ``use_skill``. None on every other step. Recorded in its own field
+            rather than squeezed into ``forced`` because a replay is not a
+            substitution: it is a span of several browser actions inside one
+            step, and the question a reader has about one is how far it got.
         records: What this step's model calls cost, refused attempts included.
     """
 
@@ -167,6 +159,7 @@ class StepReport:
     rejections: tuple[Rejection, ...] = ()
     forced: str = ""
     gate: GateDecision | None = None
+    replay: Replay | None = None
     records: tuple[CallRecord, ...] = ()
 
     def summary(self) -> str:
@@ -205,6 +198,7 @@ class StepReport:
             "rejections": [rejection.to_dict() for rejection in self.rejections],
             "forced": self.forced,
             "screenshot_decision": self.gate.to_dict() if self.gate else None,
+            "replay": self.replay.to_dict() if self.replay else None,
             "calls": [
                 {
                     **asdict(record),
@@ -265,6 +259,7 @@ class StepReport:
             rejections=tuple(Rejection.from_dict(item) for item in data.get("rejections", ())),
             forced=data.get("forced", ""),
             gate=GateDecision.from_dict(gate) if gate else None,
+            replay=Replay.from_dict(replayed) if (replayed := data.get("replay")) else None,
             records=tuple(CallRecord.from_dict(call) for call in data.get("calls", ())),
         )
 
@@ -630,13 +625,16 @@ class Controller:
             None to carry on.
         """
         replayed = self._replay(action, observation) if self._replay else None
-        detail = replayed.detail if replayed else "no replay configured"
+        note = replayed.summary() if replayed else f"{action.describe()} - no replay configured"
+
         self._executed.append(action.describe())
         self._memory.record(action, observation=observation)
-        self._memory.note("last skill", f"{action.describe()} - {detail}")
-        self._add_step(
-            observation, action=action, plan=plan, forced="" if replayed and replayed.ok else detail
-        )
+        # Keyed, so a second skill in the same run replaces this rather than
+        # adding to it -- and worded as how far it got, because that is what
+        # the planner needs when it picks up: "two of four steps done" tells it
+        # the search was submitted and only the result was not opened.
+        self._memory.note("last skill", note)
+        self._add_step(observation, action=action, plan=plan, replay=replayed)
         return self._look_again()
 
     def _ask(self, task: str, complaints: tuple[str, ...]) -> PlannerDecision:
@@ -805,6 +803,7 @@ class Controller:
         plan: StepOutcome | None = None,
         forced: str = "",
         attempts: int | None = None,
+        replay: Replay | None = None,
     ) -> None:
         """Record one step for the trace.
 
@@ -817,6 +816,8 @@ class Controller:
             forced: Why the action was substituted, if it was.
             attempts: Overrides the attempt count, for a step that never got as
                 far as a plan.
+            replay: What came of replaying a stored skill, for a ``use_skill``
+                step. None on every other kind.
 
         Raises:
             TraceError: If the step cannot be written to the run folder, or
@@ -844,6 +845,7 @@ class Controller:
             rejections=rejections,
             forced=forced,
             gate=getattr(self, "_last_gate", None),
+            replay=replay,
             records=records,
         )
         self._steps.append(step)

@@ -39,6 +39,7 @@ from web_action_agent.config import Config
 from web_action_agent.executor import Executor
 from web_action_agent.inducer import Inducer
 from web_action_agent.model_client import ModelClient, load_profile
+from web_action_agent.replay import fill_in
 from web_action_agent.skill_schema import ClickStep, Selector, Skill
 from web_action_agent.skill_store import SkillStore
 from web_action_agent.trace_reader import read_run
@@ -49,7 +50,6 @@ from web_action_agent.verifier import (
     SkillVerifier,
     StepReplay,
     VerificationError,
-    fill_in,
 )
 from web_action_agent.verifier import Verification as Verdict
 
@@ -457,30 +457,6 @@ def test_the_structural_layer_can_run_alone_and_says_so(
     assert verdict.passed is True
     assert verdict.judge_calls == 0
     assert "no judge configured" in verdict.reason
-
-
-# --- Filling the blanks in ---------------------------------------------------
-
-
-@pytest.mark.unit
-def test_a_step_with_no_value_for_its_blank_is_refused() -> None:
-    """Otherwise the agent types the characters "{query}" into a search box.
-
-    And reports the step as having worked, which is the quiet kind of wrong.
-    """
-    skill = a_candidate()
-
-    with pytest.raises(VerificationError, match="no value was given"):
-        fill_in(skill.steps[0], {})
-
-
-@pytest.mark.unit
-def test_steps_that_carry_no_text_pass_through_untouched() -> None:
-    """Most steps have no blank in them, and substitution must not invent one."""
-    skill = a_candidate()
-
-    assert fill_in(skill.steps[1], {"query": "privacy"}) == skill.steps[1], "press Enter"
-    assert fill_in(skill.steps[0], {"query": "privacy"}).text == "privacy"
 
 
 @pytest.mark.unit

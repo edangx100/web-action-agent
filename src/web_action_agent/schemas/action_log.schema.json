@@ -83,6 +83,23 @@
       "type": ["object", "null"],
       "description": "Whether this step's observation carried an image, and the rule that decided it. Null when the run had no gate."
     },
+    "replay": {
+      "type": ["object", "null"],
+      "description": "What came of replaying a stored skill, for a use_skill step: how many of its steps ran, which one the planner took over at, and how each element was found. Null on every other kind of step, and absent in traces written before skills could be replayed.",
+      "required": ["skill", "ok"],
+      "properties": {
+        "skill": {"type": "string", "description": "The skill replayed."},
+        "ok": {"type": "boolean", "description": "Whether every step of it ran."},
+        "completed": {"type": "integer", "minimum": 0, "description": "How many steps ran."},
+        "total": {"type": "integer", "minimum": 0, "description": "How many the skill has."},
+        "handover": {
+          "type": ["integer", "null"],
+          "description": "The step the planner took over at, or null when the replay finished. The point of the fallback: everything before it is already done."
+        },
+        "detail": {"type": "string", "description": "What happened, in a sentence."},
+        "steps": {"type": "array", "items": {"type": "object"}}
+      }
+    },
     "calls": {
       "type": "array",
       "description": "Every model call this step made, refused attempts included.",
