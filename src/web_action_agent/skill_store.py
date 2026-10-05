@@ -25,11 +25,38 @@ the dangerous option: a skill that silently disappears from the library looks
 exactly like a skill that was never induced, and the run that should have used
 it just costs more for no visible reason.
 
+**Curation lives here, because this is where the numbers change.** A skill that
+has stopped working is a fact about its record -- so many replays, so few that
+worked -- and the only moment that record changes is when a replay is written
+down. Deciding retirement anywhere else would mean something, somewhere, having
+to remember to look.
+
+**Retirement only goes one way, and that is the design rather than a
+simplification.** A retired skill is left out of what the planner is offered, so
+it is never replayed, so its success rate can never recover. The library can
+forget and cannot spontaneously remember. What replaces a retired skill is not
+the skill getting another chance; it is the agent working the route out by hand
+on its next run, and that run being learnt from in the usual way. A site that
+changed gets a new recipe, not a rehabilitated old one.
+
+**One writer at a time is assumed, and that assumption has an edge.** Recording
+a replay reads the skill from disk, adds one, and writes it back. Two processes
+doing that to the same skill at the same moment can lose an update: both read
+"five uses", both write "six". A benchmark running several workers over one
+library is exactly that situation.
+
+A lost count only moves a retirement slightly, which is tolerable. The case that
+is not is a worker writing back a copy it read *before* another worker retired
+the skill, which would quietly bring a retired skill back into service. Nothing
+here prevents that today. The fix is a lock around the read-and-write, and the
+right moment to add one is when a harness that actually runs workers in parallel
+exists, because its shape decides whether the lock belongs here or around the
+whole pass. Until then this is a known edge rather than a surprise.
+
 **What this module does not do.** It does not decide which skills are relevant
-to a task -- that is retrieval, and it reads from here. It does not decide when
-a skill has stopped working -- that is curation, and it writes through here. The
-store knows how to keep files and nothing about what is in them beyond the
-schema.
+to a task -- that is retrieval, and it reads from here. The store knows how to
+keep files, and the one judgment it makes about their contents is the arithmetic
+of whether a skill has earned its place.
 """
 
 from __future__ import annotations
@@ -38,11 +65,14 @@ import json
 import os
 import tempfile
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import ValidationError
 
-from .skill_schema import Skill
+from .config import Config
+from .skill_schema import Skill, SkillStats
+from .trace import utc_now
 
 #: Where a library lives when nobody says otherwise. Relative, so it sits beside
 #: the run folders in whatever directory the agent is being used from, and
@@ -54,6 +84,68 @@ DEFAULT_SKILLS_ROOT = Path("skills")
 #: schema restricts what a name may contain: a library should be the same shape
 #: on every machine, and not every filesystem agrees about the rest of Unicode.
 SKILL_SUFFIX = ".json"
+
+
+@dataclass(frozen=True)
+class RetirementPolicy:
+    """When a skill has failed often enough to be taken out of service.
+
+    A tiny amount of arithmetic, kept as its own record for two reasons. It can
+    be reasoned about without a folder or a browser anywhere near it, which is
+    what makes the edges -- a skill with no uses, a skill at exactly the
+    threshold -- cheap to pin down. And the numbers belong to the run's
+    configuration rather than to this code, because the right values depend on
+    how flaky the sites being visited are, and that is a thing an experiment
+    should be able to change without a code change.
+
+    Attributes:
+        rate: The success rate a skill must keep. Below this it is retired.
+        min_sample: Replays required before retirement may trigger at all. The
+            reason it exists: a brand-new skill that fails once is at 0%, and
+            without a floor on the sample the first unlucky replay would retire
+            a skill that works.
+    """
+
+    rate: float = 0.70
+    min_sample: int = 5
+
+    @classmethod
+    def from_config(cls, config: Config) -> RetirementPolicy:
+        """Build the policy a run is configured for.
+
+        Args:
+            config: The run's resolved settings.
+
+        Returns:
+            RetirementPolicy: The configured thresholds.
+        """
+        return cls(rate=config.skill_retirement_rate, min_sample=config.skill_retirement_min_sample)
+
+    def verdict_on(self, stats: SkillStats) -> str | None:
+        """Say whether a record has fallen below the bar, and why.
+
+        Args:
+            stats: The skill's record so far, including the replay just
+                written down.
+
+        Returns:
+            str | None: The reason to retire, written for a person reading the
+            library months later, or None to leave the skill in service. The
+            sentence carries the numbers because "retired for a low success
+            rate" is not something anybody can check, and "3 of 11 replays
+            worked" is.
+        """
+        if stats.uses < self.min_sample:
+            # Not enough evidence yet. A skill is innocent until it has had a
+            # fair number of chances to be guilty.
+            return None
+        achieved = stats.success_rate
+        if achieved is None or achieved >= self.rate:
+            return None
+        return (
+            f"{stats.successes} of {stats.uses} replays worked "
+            f"({achieved:.0%}), below the {self.rate:.0%} the library requires"
+        )
 
 
 class SkillStoreError(Exception):
@@ -81,7 +173,7 @@ class SkillStore:
             finding it empty does not leave an empty folder behind.
     """
 
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self, root: Path | None = None, *, policy: RetirementPolicy | None = None) -> None:
         """Point a store at a folder.
 
         Args:
@@ -90,8 +182,28 @@ class SkillStore:
                 a legitimate and common state -- it is what an agent that has
                 learnt nothing yet looks like -- so it is not created or
                 complained about here.
+            policy: When a skill has failed often enough to be retired. Held by
+                the store rather than passed to each call, so that every caller
+                recording a replay applies the same bar without having to
+                remember to -- a library curated by two different rules
+                depending on who was writing would be a library whose
+                retirements mean nothing.
         """
         self.root = root if root is not None else DEFAULT_SKILLS_ROOT
+        self.policy = policy or RetirementPolicy()
+
+    @classmethod
+    def from_config(cls, config: Config, root: Path | None = None) -> SkillStore:
+        """Build a store curated by the run's configured thresholds.
+
+        Args:
+            config: The run's resolved settings.
+            root: Where the skills live.
+
+        Returns:
+            SkillStore: A store that retires by the configured rule.
+        """
+        return cls(root, policy=RetirementPolicy.from_config(config))
 
     def path_for(self, name: str) -> Path:
         """Say which file a skill by this name lives in.
@@ -228,6 +340,82 @@ class SkillStore:
         except OSError as error:
             raise SkillStoreError(f"cannot remove {path}: {error}") from error
         return True
+
+    def record_use(self, name: str, *, succeeded: bool) -> Skill:
+        """Write down one replay of a skill, and retire it if it has earned that.
+
+        The only moment a skill's record changes, and therefore the only moment
+        retirement is decided. Reading from disk rather than taking a caller's
+        copy is deliberate: a run may have been holding that skill since before
+        the replay, and writing a stale copy back would undo whatever else had
+        been recorded in between.
+
+        Args:
+            name: The skill that was replayed.
+            succeeded: Whether the replay ran every step. A replay that handed
+                control back partway is a failure here even though the run may
+                have gone on to succeed -- what is being counted is whether the
+                *recipe* worked, not whether the task did.
+
+        Returns:
+            Skill: The skill as it now stands, retired or not.
+
+        Raises:
+            SkillStoreError: If the library has no such skill, or it cannot be
+                read or written. A replay of a skill that is not there means
+                something upstream is inconsistent, and silently creating one
+                would hide it.
+        """
+        skill = self.find(name)
+        if skill is None:
+            raise SkillStoreError(f"cannot record a use of {name!r}: the library has no such skill")
+
+        stats = SkillStats(
+            uses=skill.stats.uses + 1, successes=skill.stats.successes + (1 if succeeded else 0)
+        )
+        updated = skill.model_copy(update={"stats": stats})
+
+        # Only a skill still in service can be retired. One already retired
+        # keeps counting -- its record is the evidence for why it went -- but
+        # its retirement reason and date stay as they were, because the day it
+        # was taken out of service is a fact and not a running total.
+        reason = self.policy.verdict_on(stats) if skill.active else None
+        if reason is not None:
+            updated = updated.model_copy(
+                update={"active": False, "retired_reason": reason, "retired_at": utc_now()}
+            )
+
+        self.save(updated)
+        return updated
+
+    def retire(self, name: str, reason: str) -> Skill:
+        """Take a skill out of service by hand.
+
+        Separate from the automatic rule, and for a different situation: a
+        person who can see something the arithmetic cannot. A skill that works
+        perfectly and does the wrong thing has a flawless record and should
+        still go.
+
+        Args:
+            name: The skill to retire.
+            reason: Why, for whoever reads the library later. Recorded exactly
+                as given rather than dressed up, because a human reason is
+                usually better than anything this code could write.
+
+        Returns:
+            Skill: The retired skill.
+
+        Raises:
+            SkillStoreError: If the library has no such skill.
+        """
+        skill = self.find(name)
+        if skill is None:
+            raise SkillStoreError(f"cannot retire {name!r}: the library has no such skill")
+        retired = skill.model_copy(
+            update={"active": False, "retired_reason": reason, "retired_at": utc_now()}
+        )
+        self.save(retired)
+        return retired
 
     def _read(self, path: Path) -> Skill:
         """Read one skill file.
