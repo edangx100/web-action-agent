@@ -221,11 +221,11 @@ def test_work_that_did_not_happen_is_a_task_failure_not_a_usage_error() -> None:
     understood and accepted, and it is the work that did not succeed. A script
     should treat this like any other failed run, not like its own typo.
 
-    ``run`` used to be the example here and is now built, so the example is a
-    command that is not: the rule is about the exit codes, not about which
-    command happens to be unfinished this month.
+    ``run`` was the example here, then ``skills list``, and both are now built.
+    The example moves on each time; the rule does not. It is about the exit
+    codes, not about which command happens to be unfinished this month.
     """
-    result = invoke(["skills", "list"])
+    result = invoke(["judge"])
 
     assert result.exit_code == EXIT_TASK_FAILURE
     assert "not built yet" in result.output

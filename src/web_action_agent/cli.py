@@ -38,25 +38,33 @@ from __future__ import annotations
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
+from pydantic import ValidationError
 
 from web_action_agent.allowlist import Allowlist, AllowlistError
 from web_action_agent.browser import BrowserProcess, BrowserSettings
-from web_action_agent.capabilities import report_capabilities
+from web_action_agent.capabilities import JUDGE_PROFILE_ENV, report_capabilities
 from web_action_agent.config import Config, ConfigError, flag_for, load_config, resolve_env
 from web_action_agent.controller import Controller, RunReport
 from web_action_agent.executor import Executor
+from web_action_agent.inducer import Inducer, InductionError
 from web_action_agent.memory import Memory
-from web_action_agent.model_client import ModelClient, ModelClientError
+from web_action_agent.model_client import ModelClient, ModelClientError, ProfileError
 from web_action_agent.planner import Planner
 from web_action_agent.politeness import politeness_for_run
-from web_action_agent.reporting import TerminalTrace
+from web_action_agent.replay import SkillReplayer
+from web_action_agent.reporting import StepListener, TerminalTrace
+from web_action_agent.retrieval import for_url
 from web_action_agent.screenshot_gate import ScreenshotGate
+from web_action_agent.skill_schema import Skill
+from web_action_agent.skill_store import SkillStore, SkillStoreError
 from web_action_agent.timeouts import RunBudget
 from web_action_agent.trace import TraceError, TraceWriter
+from web_action_agent.trace_reader import read_run
 from web_action_agent.validator import Validator
+from web_action_agent.verifier import SkillVerifier, Verification, VerificationError
 
 #: The command did what was asked.
 EXIT_SUCCESS = 0
@@ -73,6 +81,11 @@ EXIT_USAGE = 2
 #: moment it started. The trace writer will own the contents; for now the
 #: run's screenshots go here, which is why the folder exists this early.
 RUNS_ROOT = Path("runs")
+
+#: Where the learned skills live. One folder of readable files, beside the run
+#: folders, so that what the agent has learnt is as easy to look at as what it
+#: did.
+SKILLS_ROOT = Path("skills")
 
 #: Where the benchmark's task definitions live when ``--suite`` is not given.
 DEFAULT_SUITE = Path("benchmark/tasks.yaml")
@@ -232,20 +245,34 @@ def _do_one_task(config: Config, task: str) -> int:
     watching = TerminalTrace(lambda line: typer.echo(line, err=True))
     watching.opening(task, config.start_url)
 
+    # The library, and the skills from it that belong to this site. Read once,
+    # before the browser starts, so the run works from a fixed list: a library
+    # that changed underneath a run would make two runs of one task
+    # incomparable, which is the thing the whole benchmark rests on.
+    library = SkillStore.from_config(config, SKILLS_ROOT)
+    offered = for_url(library.load_all(), config.start_url)
+    if offered.skills:
+        watching.write(f"skills: {offered.summary()}")
+
     # One browser process, one task, one context inside it -- the same shape a
     # benchmark worker uses, so an ad-hoc run and a measured one behave alike.
     with (
         BrowserProcess(BrowserSettings.from_config(config)) as browser,
         browser.task_session() as session,
     ):
+        executor = Executor(
+            session,
+            action_timeout_s=config.action_timeout_s,
+            throttle=throttle,
+        )
+        # The gate is told about the library so that `use_skill` is an action
+        # at all: without one it refuses every invocation, which is right for a
+        # run that has nothing to replay.
+        validator = Validator(allowlist, robots=robots, skills=library)
         controller = Controller(
             planner=Planner(client),
-            validator=Validator(allowlist, robots=robots),
-            executor=Executor(
-                session,
-                action_timeout_s=config.action_timeout_s,
-                throttle=throttle,
-            ),
+            validator=validator,
+            executor=executor,
             memory=Memory.from_config(config),
             max_steps=config.max_steps,
             retry_budget=config.retry_budget,
@@ -254,13 +281,262 @@ def _do_one_task(config: Config, task: str) -> int:
             screenshot_dir=trace.screenshot_dir,
             config=config,
             trace=trace,
-            on_step=watching.step,
+            skills=offered.lines,
+            replay=SkillReplayer(
+                executor=executor,
+                validator=validator,
+                config=config,
+                library=library,
+                screenshot_dir=trace.screenshot_dir,
+            ),
+            on_step=_watch_and_tally(watching, library),
         )
         report = controller.run(task, start_url=config.start_url)
 
     exit_code = EXIT_SUCCESS if report.outcome.ok else EXIT_TASK_FAILURE
     _report_run(report, folder, watching, exit_code)
     return exit_code
+
+
+def _judge_for(config: Config) -> ModelClient | None:
+    """Build the model that decides whether a replayed skill landed correctly.
+
+    Deliberately a *different* endpoint from the one that drove the run, when
+    one is configured: a model marking work it produced is marking its own
+    homework, and the project's whole output is a table of marks.
+
+    Args:
+        config: The run's resolved settings, for the timeout.
+
+    Returns:
+        ModelClient | None: The judge, or None when none is configured. None is
+        a legitimate answer rather than an error -- verification then runs its
+        mechanical layer alone, which the project allows as a stated position
+        with the retirement threshold as the quality filter instead. The caller
+        says out loud which of the two happened, so a library checked without a
+        judge cannot be mistaken for one checked with.
+    """
+    name = (resolve_env().get(JUDGE_PROFILE_ENV) or "").strip()
+    if not name:
+        return None
+    try:
+        # The profile is chosen through the config, which is the one place
+        # profile selection happens -- so the judge gets the run's timeouts and
+        # backoff policy without this having to know about either.
+        return ModelClient.from_config(config.model_copy(update={"profile": name}))
+    except (ModelClientError, ProfileError):
+        # Named but unusable -- a profile that is not there, or a key that is
+        # not set. Treated as "no judge" rather than fatal, because the
+        # mechanical layer still catches most bad candidates and refusing to
+        # induce at all would be a worse answer than inducing carefully.
+        return None
+
+
+def _induce_from(config: Config, folders: list[Path]) -> int:
+    """Learn a skill from each finished run, keeping only the ones that check out.
+
+    The order is the point: induce, then *verify against a live page with
+    different values*, then store. A candidate that skipped the middle step
+    would be a recipe believed on the strength of the one run it came from.
+
+    Args:
+        config: The run's resolved settings.
+        folders: The run folders to learn from.
+
+    Returns:
+        int: :data:`EXIT_SUCCESS` if at least one skill was stored, or if there
+        was nothing eligible to learn from -- a directory of failed runs is not
+        a failed command. :data:`EXIT_TASK_FAILURE` when every candidate that
+        was produced went on to be discarded, which is a result worth an exit
+        code because it usually means the site has moved on.
+    """
+    try:
+        client = ModelClient.from_config(config)
+    except ModelClientError as error:
+        typer.echo(f"waa: {error}", err=True)
+        return EXIT_USAGE
+
+    judge = _judge_for(config)
+    typer.echo(
+        "checking candidates by replay"
+        + (" and one judge call each" if judge else " alone (no judge configured)"),
+        err=True,
+    )
+
+    library = SkillStore.from_config(config, SKILLS_ROOT)
+    inducer = Inducer(client)
+    induced = verified = discarded = 0
+
+    with BrowserProcess(BrowserSettings.from_config(config)) as browser:
+        for folder in folders:
+            try:
+                run = read_run(folder)
+            except TraceError as error:
+                typer.echo(f"  {folder.name}: not a run folder ({error})", err=True)
+                continue
+
+            try:
+                # The result wraps the candidate with what the call cost and
+                # what was left out of the route; the skill is one field of it.
+                candidate = inducer.induce(run).skill
+            except InductionError as error:
+                # Not an error in the ordinary sense: most run folders are not
+                # eligible, because most runs fail, and only successful ones
+                # may be learnt from.
+                typer.echo(f"  {folder.name}: nothing to learn ({error})", err=True)
+                continue
+            except (ModelClientError, ValidationError) as error:
+                typer.echo(f"  {folder.name}: could not be turned into a skill ({error})", err=True)
+                continue
+
+            induced += 1
+            verdict = _check(config, browser, candidate, run.start_url, judge)
+            if verdict is None:
+                continue
+            if verdict.passed:
+                library.save(candidate)
+                verified += 1
+                typer.echo(
+                    f"  {folder.name}: stored {candidate.name!r} - {verdict.reason}", err=True
+                )
+            else:
+                discarded += 1
+                typer.echo(f"  {folder.name}: {verdict.summary()}", err=True)
+
+    typer.echo(f"{induced} induced, {verified} verified, {discarded} discarded", err=True)
+    if verified:
+        typer.echo(f"library: {SKILLS_ROOT}", err=True)
+    return EXIT_TASK_FAILURE if induced and not verified else EXIT_SUCCESS
+
+
+def _check(
+    config: Config,
+    browser: BrowserProcess,
+    candidate: Skill,
+    start_url: str,
+    judge: ModelClient | None,
+) -> Verification | None:
+    """Replay one candidate with different values, and say whether it worked.
+
+    Each candidate gets its own browser context, so a page left over from
+    checking one skill cannot be what the next one is checked against.
+
+    Args:
+        config: The run's resolved settings.
+        browser: The browser process to open a context in.
+        candidate: The skill to check.
+        start_url: The page its run started from, which is where the check
+            begins. A skill has no starting page of its own: it is a move the
+            planner may make from wherever the agent already is.
+        judge: The model that decides whether the final page is right, or None
+            for the mechanical layer alone.
+
+    Returns:
+        Verification | None: The verdict, or None when the check could not be
+        carried out -- a judge that was unreachable, a page that would not
+        open. Those are not the candidate's fault and it is not written off for
+        them; it is simply not stored this time.
+    """
+    with browser.task_session() as session:
+        executor = Executor(session, action_timeout_s=config.action_timeout_s)
+        verifier = SkillVerifier(
+            executor=executor,
+            validator=Validator(Allowlist.derive(start_url)),
+            config=config,
+            judge=judge,
+        )
+        try:
+            return verifier.verify(candidate, start_url=start_url)
+        except VerificationError as error:
+            typer.echo(f"  {candidate.name}: could not be checked ({error})", err=True)
+            return None
+
+
+def _describe_skill(skill: Skill) -> list[str]:
+    """Write one skill out in full, for a person deciding whether to trust it.
+
+    Args:
+        skill: The skill to describe.
+
+    Returns:
+        list[str]: The lines to print, in order: what it is, what it needs,
+        what it does step by step, how it has done, and how it was checked --
+        which is the order somebody reads them in when asking whether to keep
+        it.
+    """
+    lines = [
+        f"{skill.name} - {skill.description}",
+        f"  site     {skill.domain}",
+        f"  record   {skill.stats.successes}/{skill.stats.uses} replays worked"
+        if skill.stats.uses
+        else "  record   never replayed",
+    ]
+    if not skill.active:
+        lines.append(f"  retired  {skill.retired_at}: {skill.retired_reason}")
+    if skill.induced_from:
+        lines.append(f"  learnt   from run {skill.induced_from}")
+
+    if skill.params:
+        lines.append("  needs")
+        for param in skill.params:
+            optional = "" if param.required else " (optional)"
+            example = f" e.g. {param.example!r}" if param.example else ""
+            lines.append(f"    {param.name}{optional} - {param.description}{example}")
+
+    lines.append("  does")
+    lines.extend(f"    {number}. {step.describe()}" for number, step in enumerate(skill.steps, 1))
+
+    # The check is shown because it is the reason the skill is trusted at all,
+    # and because a reader who disagrees with it has found a real problem.
+    values = ", ".join(
+        f"{name}={value!r}" for name, value in sorted(skill.verification.params.items())
+    )
+    lines.append("  checked  by replaying it with " + (values or "no values"))
+    lines.append(f"           expecting {skill.verification.expected_outcome}")
+    return lines
+
+
+def _watch_and_tally(watching: TerminalTrace, library: SkillStore) -> StepListener:
+    """Show each finished step, and write down how any replay in it went.
+
+    Two things happen to a step and they belong to different components, so
+    they are joined here rather than inside either: the terminal shows it, and
+    the library counts it. The library's count is what eventually retires a
+    skill that a site has changed under, and the only moment that count can
+    change is when a replay finishes.
+
+    What is counted is whether the *recipe* worked, not whether the run did. A
+    replay that handed control back after two steps may be part of a run that
+    goes on to succeed by hand -- a good outcome for the task, and still a
+    failure of the skill.
+
+    Args:
+        watching: The terminal trace streaming the run.
+        library: The skill library to record the use in.
+
+    Returns:
+        StepListener: The callback the loop calls as each step completes.
+    """
+
+    def on_step(step: Any) -> None:
+        """Show one step, and tally it if it replayed a skill.
+
+        Args:
+            step: The step the controller has just finished.
+        """
+        watching.step(step)
+        if step.replay is None:
+            return
+        try:
+            library.record_use(step.replay.skill, succeeded=step.replay.ok)
+        except SkillStoreError as error:
+            # Bookkeeping that cannot be written must not end a run that is
+            # otherwise working. Said out loud rather than swallowed, because a
+            # library silently stopping counting is how a skill that has
+            # stopped working stays in service forever.
+            watching.write(f"warning: could not record the use of {step.replay.skill!r}: {error}")
+
+    return on_step
 
 
 def _report_run(
@@ -437,8 +713,12 @@ def induce(
         typer.echo("waa: give a run folder or --all, not both", err=True)
         raise typer.Exit(EXIT_USAGE)
 
-    _startup()
-    _not_built_yet("skill induction")
+    config = _startup()
+    folders = sorted(f for f in all_runs.iterdir() if f.is_dir()) if all_runs else [run_folder]
+    if all_runs is not None and not folders:
+        typer.echo(f"waa: {all_runs} holds no run folders", err=True)
+        raise typer.Exit(EXIT_USAGE)
+    raise typer.Exit(_induce_from(config, [f for f in folders if f is not None]))
 
 
 @skills_app.command(
@@ -446,9 +726,33 @@ def induce(
     help="List every skill in the library, with how well each one has done.",
 )
 def skills_list() -> None:
-    """List every skill in the library, with how well each one has done."""
-    _startup()
-    _not_built_yet("the skill library")
+    """List every skill in the library, with how well each one has done.
+
+    Retired skills are shown too, and marked. They are not offered to the agent
+    any more, but they are part of what the library knows -- and a list that
+    hid them would leave somebody wondering where a skill had gone.
+
+    Raises:
+        typer.Exit: With :data:`EXIT_SUCCESS` always; an empty library is the
+            ordinary state of a fresh install rather than a failure.
+    """
+    config = _startup()
+    library = SkillStore.from_config(config, SKILLS_ROOT)
+    try:
+        skills = library.load_all()
+    except SkillStoreError as error:
+        typer.echo(f"waa: {error}", err=True)
+        raise typer.Exit(EXIT_USAGE) from error
+
+    if not skills:
+        typer.echo(f"no skills yet. run some tasks, then: waa induce --all {RUNS_ROOT}", err=True)
+        raise typer.Exit(EXIT_SUCCESS)
+
+    for skill in skills:
+        typer.echo(skill.summary())
+    active = sum(1 for skill in skills if skill.active)
+    typer.echo(f"{active} in service, {len(skills) - active} retired", err=True)
+    raise typer.Exit(EXIT_SUCCESS)
 
 
 @skills_app.command(
@@ -460,11 +764,31 @@ def skills_show(
 ) -> None:
     """Show one skill in full: its steps, its parameters, and its record.
 
+    Written out as prose rather than as the file's own JSON. The file is
+    readable and sitting right there for anybody who wants it; what this is for
+    is the question "what does this thing actually do", and a numbered list of
+    steps in words answers that faster than a nested document.
+
     Args:
         name: The skill to show.
+
+    Raises:
+        typer.Exit: With :data:`EXIT_USAGE` if the library has no such skill.
     """
-    _startup()
-    _not_built_yet(f"showing skill {name!r}")
+    config = _startup()
+    library = SkillStore.from_config(config, SKILLS_ROOT)
+    try:
+        skill = library.find(name)
+    except SkillStoreError as error:
+        typer.echo(f"waa: {error}", err=True)
+        raise typer.Exit(EXIT_USAGE) from error
+    if skill is None:
+        typer.echo(f"waa: no skill named {name!r}. try: waa skills list", err=True)
+        raise typer.Exit(EXIT_USAGE)
+
+    for line in _describe_skill(skill):
+        typer.echo(line)
+    raise typer.Exit(EXIT_SUCCESS)
 
 
 @skills_app.command(
@@ -477,14 +801,38 @@ def skills_show(
 )
 def skills_retire(
     name: Annotated[str, typer.Argument(help="Which skill to retire.")],
+    reason: Annotated[
+        str,
+        typer.Option("--reason", help="Why, for whoever reads the library later."),
+    ] = "retired by hand",
 ) -> None:
     """Retire a skill so the agent stops using it.
 
+    For the reasons a success rate cannot see. A skill that works perfectly and
+    does the wrong thing has a flawless record and should still go, and no
+    amount of counting will ever notice.
+
     Args:
         name: The skill to retire.
+        reason: Why, recorded in the file for whoever reads it later.
+
+    Raises:
+        typer.Exit: With :data:`EXIT_USAGE` if the library has no such skill.
     """
-    _startup()
-    _not_built_yet(f"retiring skill {name!r}")
+    config = _startup()
+    library = SkillStore.from_config(config, SKILLS_ROOT)
+    try:
+        retired = library.retire(name, reason)
+    except SkillStoreError as error:
+        typer.echo(f"waa: {error}", err=True)
+        raise typer.Exit(EXIT_USAGE) from error
+
+    typer.echo(f"retired {retired.name!r}: {retired.retired_reason}")
+    typer.echo(
+        f"kept at {library.path_for(name)} -- its record is the evidence for why it went",
+        err=True,
+    )
+    raise typer.Exit(EXIT_SUCCESS)
 
 
 @app.command(

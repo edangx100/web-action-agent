@@ -359,6 +359,15 @@ class Inducer:
 
         if response.data is None:
             raise InductionError("the reply was not a JSON object")
+
+        # The schema says these are required, but a route that cannot constrain
+        # decoding is shown the schema in the prompt and no more -- so a reply
+        # missing half of them is a real possibility rather than a theoretical
+        # one. Named here so the caller gets "the reply had no verification
+        # block" rather than a KeyError from three functions further in.
+        missing = [field for field in induction_schema()["required"] if field not in response.data]
+        if missing:
+            raise InductionError(f"the reply left out {', '.join(missing)}")
         return response.data, response.record
 
     def _render(self, run: ReplayedRun, usable: list[tuple[Any, Observation]]) -> str:
