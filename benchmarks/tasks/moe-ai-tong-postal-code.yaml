@@ -1,0 +1,15 @@
+id: moe-ai-tong-postal-code
+site: moe
+difficulty: single_page_search
+start_url: https://www.moe.gov.sg/schoolfinder/Primary%20school
+instruction: >-
+  Use the SchoolFinder search box on this page to search for Ai Tong School.
+  Report the school's six-digit postal code.
+verdicts:
+  - method: answer_matches
+    accepted: ["579646", "S579646", "Singapore 579646"]
+  - method: url_contains
+    value: keyword=Ai
+notes: >-
+  Ai Tong School, 100 Bright Hill Drive, S579646. The search puts the keyword
+  into the URL, which is what the url_contains check looks for.

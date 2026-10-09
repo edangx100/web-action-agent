@@ -87,8 +87,9 @@ RUNS_ROOT = Path("runs")
 #: did.
 SKILLS_ROOT = Path("skills")
 
-#: Where the benchmark's task definitions live when ``--suite`` is not given.
-DEFAULT_SUITE = Path("benchmark/tasks.yaml")
+#: The benchmark suite manifest used when ``--suite`` is not given. It lists
+#: the sites and the tasks; each task is its own file in ``benchmarks/tasks/``.
+DEFAULT_SUITE = Path("benchmarks/suite.yaml")
 
 #: Where finished runs are written, and therefore where the commands that read
 #: runs back look first.
@@ -639,7 +640,7 @@ def run(
 def eval_command(
     suite: Annotated[
         Path,
-        typer.Option("--suite", help="File of benchmark task definitions."),
+        typer.Option("--suite", help="Benchmark suite manifest listing the tasks."),
     ] = DEFAULT_SUITE,
     trials: Annotated[
         int,
@@ -662,7 +663,7 @@ def eval_command(
     that true by construction, so there is no invalid combination to check for.
 
     Args:
-        suite: File listing the benchmark tasks.
+        suite: The suite manifest, which lists the benchmark tasks.
         trials: How many times to repeat each task.
         cold: True for an empty skill library, False for the learned one.
         profile: Endpoint profile for the sweep. This is the only thing that

@@ -1,0 +1,17 @@
+id: moe-bishan-primary-count
+site: moe
+difficulty: form_fill
+start_url: https://www.moe.gov.sg/schoolfinder/Primary%20school
+instruction: >-
+  Use the SchoolFinder filters on this page to show only primary schools in
+  the area Bishan. Report how many primary schools are listed.
+verdicts:
+  - method: answer_matches
+    accepted: ["3", "three"]
+  - method: url_contains
+    value: area=Bishan
+  - method: element_visible
+    text: Kuo Chuan Presbyterian Primary School
+notes: >-
+  Ai Tong School, Catholic High School (Primary), and Kuo Chuan Presbyterian
+  Primary School. Changes only if a school opens, closes, merges, or moves.

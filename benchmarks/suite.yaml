@@ -1,0 +1,133 @@
+# The benchmark suite: the sites the tasks use, and the tasks, in run order.
+#
+# Every task is its own file in tasks/, named after its id. This file lists
+# them so that a sweep runs a known, fixed set: a task file that is on disk
+# but not listed here is an error, not a silently skipped task.
+#
+# All five sites are Singapore government websites. They were chosen because
+# they are public, need no login, have no CAPTCHA, sell nothing, and render as
+# ordinary pages rather than heavy single-page apps. Several other Singapore
+# sites were considered and left out:
+#
+#   * NParks (nparks.gov.sg) and NEA (nea.gov.sg): their terms of use forbid
+#     robots or other automatic devices without prior written permission.
+#   * NLB (nlb.gov.sg): the catalogue's robots.txt blocks a long list of AI
+#     agents by name, including ones acting for a user. The main site and
+#     Infopedia refuse a headless browser outright.
+#   * gov.sg, HDB, Singapore Statutes Online: refuse a headless browser.
+#   * CPF's contribution calculator: it requires ticking "I have read and
+#     accepted the Terms of Use" before it starts, and a benchmark task should
+#     not have the agent accept terms on anyone's behalf. CPF's ordinary
+#     information pages are used instead.
+#
+# Each site's `terms` block records what its terms of use and robots.txt say
+# about an automated, read-only visitor. The summaries are drafted; a person
+# confirms each by reading the terms and filling in `reviewed_on`.
+
+name: sg-gov-v1
+description: >-
+  Twelve read-only tasks on five Singapore government websites: three on
+  finding an answer on one page, three on filling in a search form, and six
+  on navigating through several pages to reach an answer.
+
+sites:
+  - id: mom
+    name: Ministry of Manpower
+    domain: mom.gov.sg
+    # A "quick tour of our new page design" overlay covers the page on the
+    # first visit and blocks clicks until "Skip" is pressed. Each task gets a
+    # fresh browser, so every MOM task spends one step on it.
+    consent_steps: 1
+    consent_note: >-
+      A page-design tour overlay blocks clicks on the first visit; one click
+      on "Skip" dismisses it.
+    terms:
+      terms_url: https://www.mom.gov.sg/terms-of-use
+      robots_url: https://www.mom.gov.sg/robots.txt
+      summary: >-
+        No clause on robots or automated access. Commercial reuse of content
+        needs written permission (fair dealing for research is allowed), and
+        hyperlinking to internal pages from another website needs permission.
+        robots.txt allows all pages the tasks use; it disallows only
+        subscription and e-book paths.
+      reviewed_on:
+
+  - id: moe
+    name: Ministry of Education
+    domain: moe.gov.sg
+    # SchoolFinder shows a "Learn to use SchoolFinder" tour with a Skip button.
+    consent_steps: 1
+    consent_note: >-
+      SchoolFinder opens a "Learn to use SchoolFinder" tour; one click on
+      "Skip" dismisses it.
+    terms:
+      terms_url: https://www.moe.gov.sg/terms-of-use
+      robots_url: https://www.moe.gov.sg/robots.txt
+      summary: >-
+        No clause on robots or automated access. Commercial reuse of content
+        needs written permission (fair dealing for research is allowed).
+        robots.txt allows everything.
+      reviewed_on:
+
+  - id: iras
+    name: Inland Revenue Authority of Singapore
+    domain: iras.gov.sg
+    # A scam-warning banner and a chat button appear, but neither blocks the
+    # page.
+    consent_steps: 0
+    terms:
+      terms_url: https://www.iras.gov.sg/terms-of-use-browser-compatibility
+      robots_url: https://www.iras.gov.sg/robots.txt
+      summary: >-
+        No clause on robots or automated access. Content is copyright, and
+        hyperlinking to or framing internal pages from another website needs
+        permission. There is no robots.txt (the URL serves a not-found page),
+        so nothing is disallowed.
+      reviewed_on:
+
+  - id: singstat
+    name: Singapore Department of Statistics
+    domain: singstat.gov.sg
+    consent_steps: 0
+    terms:
+      terms_url: https://www.singstat.gov.sg/terms-of-use
+      robots_url: https://www.singstat.gov.sg/robots.txt
+      summary: >-
+        No clause on robots or automated access. Hyperlinking, framing, or
+        inline linking from another website needs written permission.
+        robots.txt allows everything but asks for a crawl delay of 2 seconds,
+        longer than the agent's default politeness delay of about 1 second;
+        at three trials of two tasks the total load is a handful of page loads.
+      reviewed_on:
+
+  - id: cpf
+    name: Central Provident Fund Board
+    domain: cpf.gov.sg
+    consent_steps: 0
+    terms:
+      terms_url: https://www.cpf.gov.sg/member/terms-of-use
+      robots_url: https://www.cpf.gov.sg/robots.txt
+      summary: >-
+        Forbids using "any robot, spider, other automatic device, or manual
+        process to monitor or copy any pages other than for non-commercial
+        purpose" without permission, so non-commercial automated reading is
+        permitted. Contents may be used for personal, non-commercial, and
+        informational purposes. robots.txt disallows only member login,
+        statement, and e-mail asset paths.
+      reviewed_on:
+
+# Run order. Grouped by site so a sweep's per-site politeness delay costs as
+# little wall-clock time as possible.
+tasks:
+  - mom-annual-leave
+  - mom-deepavali-2027
+  - moe-ai-tong-postal-code
+  - moe-bishan-primary-count
+  - moe-bishan-boys-secondary
+  - moe-queenstown-integrated-programme
+  - iras-tax-on-first-80k
+  - iras-non-resident-employment-rate
+  - singstat-total-population
+  - singstat-latest-cpi
+  - cpf-total-rate
+  - cpf-employee-share

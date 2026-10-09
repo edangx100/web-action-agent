@@ -1,0 +1,17 @@
+id: iras-non-resident-employment-rate
+site: iras
+difficulty: multi_page_navigation
+start_url: https://www.iras.gov.sg/
+instruction: >-
+  Starting from the IRAS home page, find out how the employment income of a
+  non-resident individual is taxed. Report the flat tax rate that applies to
+  it, as a percentage.
+verdicts:
+  - method: answer_matches
+    accepted: ["15%", "15", "15 percent"]
+  - method: url_contains
+    value: individual-income-tax-rates
+notes: >-
+  Taxed at a flat 15% or at the progressive resident rates, whichever gives
+  more tax. The same page gives 24% for a non-resident's other income, which is
+  the most likely wrong answer.

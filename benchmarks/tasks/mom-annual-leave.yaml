@@ -1,0 +1,17 @@
+id: mom-annual-leave
+site: mom
+difficulty: multi_page_navigation
+start_url: https://www.mom.gov.sg/
+instruction: >-
+  Starting from the Ministry of Manpower home page, find the page on annual
+  leave eligibility and entitlement. Report how many days of paid annual leave
+  an employee covered by the Employment Act is entitled to in their 4th year of
+  service. Answer with the number of days.
+verdicts:
+  - method: answer_matches
+    accepted: ["10", "10 days"]
+  - method: url_contains
+    value: annual-leave
+notes: >-
+  The entitlement table runs from 7 days in year 1 to 14 days from year 8. Set
+  by the Employment Act, so it changes only if the Act does.

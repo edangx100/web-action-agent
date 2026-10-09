@@ -1,0 +1,19 @@
+id: singstat-latest-cpi
+site: singstat
+difficulty: single_page_search
+start_url: https://www.singstat.gov.sg/
+instruction: >-
+  On the Department of Statistics home page, find the latest year-on-year
+  change in the Consumer Price Index (CPI). Report the percentage and the
+  month it refers to.
+verdicts:
+  - method: judge
+    expected_outcome: >-
+      The answer gives the year-on-year CPI change and its month exactly as
+      shown on the SingStat home page at the time of the run (2.3% for August
+      2026 when this task was written). A figure for a different indicator,
+      such as DSPI or GDP, is wrong.
+notes: >-
+  Updated monthly, so only the judge can mark it. The home page shows several
+  indicators side by side, and DSPI also sits under "Prices", which makes it
+  the likely confusion.

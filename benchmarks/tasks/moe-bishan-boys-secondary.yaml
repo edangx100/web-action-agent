@@ -1,0 +1,20 @@
+id: moe-bishan-boys-secondary
+site: moe
+difficulty: form_fill
+start_url: https://www.moe.gov.sg/schoolfinder/Secondary%20school
+instruction: >-
+  Use the SchoolFinder filters on this page to show secondary schools in the
+  area Bishan that are boys' schools. Report the names of the schools listed.
+verdicts:
+  - method: url_contains
+    value: gender=Boys
+  - method: judge
+    expected_outcome: >-
+      The answer names exactly two schools, Catholic High School (Secondary)
+      and Raffles Institution (Secondary), and the final page shows the list
+      filtered to the Bishan area and to boys' schools.
+notes: >-
+  Two filters: area (a dropdown) and school type (a checkbox in a collapsed
+  section). Both end up in the URL as area=Bishan and gender=Boys. Judged
+  rather than string-matched because the answer is a list of two names in
+  whatever order and wording the agent chooses.

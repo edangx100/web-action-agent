@@ -1,0 +1,18 @@
+id: cpf-total-rate
+site: cpf
+difficulty: multi_page_navigation
+start_url: https://www.cpf.gov.sg/employer
+instruction: >-
+  Starting from the CPF employer home page, find the current CPF contribution
+  rates. Report the total contribution rate (employer and employee shares
+  combined) for an employee aged 55 and below earning more than $750 a month,
+  as a percentage.
+verdicts:
+  - method: answer_matches
+    accepted: ["37%", "37", "37 percent"]
+  - method: url_contains
+    value: cpf-contribution
+notes: >-
+  17% from the employer and 20% from the employee, unchanged since 2016. The
+  rates for older age groups rise on 1 January 2027, which is why this task
+  asks about the youngest group.

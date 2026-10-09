@@ -1,0 +1,16 @@
+id: mom-deepavali-2027
+site: mom
+difficulty: multi_page_navigation
+start_url: https://www.mom.gov.sg/
+instruction: >-
+  Starting from the Ministry of Manpower home page, find the list of
+  Singapore's public holidays and look at the holidays for 2027. Report the
+  date of Deepavali in 2027.
+verdicts:
+  - method: answer_matches
+    accepted: ["28 October 2027", "28 Oct 2027", "2027-10-28", "October 28, 2027"]
+  - method: url_contains
+    value: public-holidays
+notes: >-
+  The public holidays page shows one year at a time behind year tabs, so the
+  agent must choose the 2027 tab. Thursday, 28 October 2027 as gazetted.

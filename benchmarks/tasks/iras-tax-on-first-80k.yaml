@@ -1,0 +1,19 @@
+id: iras-tax-on-first-80k
+site: iras
+difficulty: multi_page_navigation
+start_url: https://www.iras.gov.sg/
+instruction: >-
+  Starting from the IRAS home page, find the individual income tax rates for
+  tax residents. Using the rates that apply from Year of Assessment 2024
+  onwards, report the gross tax payable on the first $80,000 of chargeable
+  income.
+verdicts:
+  - method: answer_matches
+    accepted: ["$3,350", "3,350", "3350", "S$3,350"]
+  - method: url_contains
+    value: individual-income-tax-rates
+notes: >-
+  The rates page shows two tables, one from YA 2024 onwards and one for YA
+  2017 to YA 2023. The figure for the first $80,000 is $3,350 in both, so
+  picking the wrong table is not caught by this task; the next one reads a
+  part of the page where the tables differ.

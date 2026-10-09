@@ -1,0 +1,19 @@
+id: singstat-total-population
+site: singstat
+difficulty: multi_page_navigation
+start_url: https://www.singstat.gov.sg/
+instruction: >-
+  Starting from the Department of Statistics home page, find Singapore's
+  latest total population figure. Report the figure and the year it refers to.
+verdicts:
+  - method: url_contains
+    value: population
+  - method: judge
+    expected_outcome: >-
+      The answer gives Singapore's total population as shown on the final
+      SingStat page, with the year it refers to. When this task was written
+      the latest figure was 6,208.5 thousand (about 6.21 million) for 2026; a
+      newer figure shown on the page is also correct.
+notes: >-
+  Published once a year, so a fixed expected answer would go stale. The judge
+  compares the answer with the final screenshot instead.

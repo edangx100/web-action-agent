@@ -1,0 +1,20 @@
+id: moe-queenstown-integrated-programme
+site: moe
+difficulty: form_fill
+start_url: https://www.moe.gov.sg/schoolfinder/Secondary%20school
+instruction: >-
+  Use the SchoolFinder filters on this page to show secondary schools in the
+  area Queenstown that offer the Integrated Programme. Report the name of the
+  school listed.
+verdicts:
+  - method: answer_matches
+    accepted:
+      - Anglo-Chinese School (Independent)
+      - Anglo-Chinese School (Independent) (Secondary)
+      - ACS (Independent)
+      - ACS(I)
+  - method: url_contains
+    value: Integrated%20Programme
+notes: >-
+  Area Queenstown alone lists five secondary schools; adding the Integrated
+  Programme filter leaves one.

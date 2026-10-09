@@ -1,0 +1,15 @@
+id: cpf-employee-share
+site: cpf
+difficulty: single_page_search
+start_url: https://www.cpf.gov.sg/employer/employer-obligations/how-much-cpf-contributions-to-pay
+instruction: >-
+  On this page, find the table of current CPF contribution rates. Report the
+  employee's share of the contribution rate for an employee aged 55 and below
+  earning more than $750 a month, as a percentage of wages.
+verdicts:
+  - method: answer_matches
+    accepted: ["20%", "20", "20 percent"]
+notes: >-
+  The table lists employer, employee, and total rates side by side (17, 20, 37
+  for this age group), so the task checks that the agent reads the right
+  column.
