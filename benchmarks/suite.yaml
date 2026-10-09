@@ -100,6 +100,10 @@ sites:
         at three trials of two tasks the total load is a handful of page loads.
       reviewed_on:
 
+  # Do not use a CPF task as the committed example run. Its screenshots would
+  # publish copies of CPF's pages, and CPF's terms are the only ones here that
+  # mention robots copying pages at all (see the summary below). Pick the
+  # example from a site whose terms have no such clause, such as MOE or IRAS.
   - id: cpf
     name: Central Provident Fund Board
     domain: cpf.gov.sg
@@ -110,10 +114,15 @@ sites:
       summary: >-
         Forbids using "any robot, spider, other automatic device, or manual
         process to monitor or copy any pages other than for non-commercial
-        purpose" without permission, so non-commercial automated reading is
-        permitted. Contents may be used for personal, non-commercial, and
-        informational purposes. robots.txt disallows only member login,
-        statement, and e-mail asset paths.
+        purpose" without prior written permission. The clause is awkwardly
+        worded; the natural reading, taken here, is that robots are allowed
+        for non-commercial purposes, which this project is. It is still an
+        interpretation, not an explicit permission. The clause covers copying
+        as well as reading, and the agent saves a screenshot of every step;
+        the terms allow use of the contents for personal, internal,
+        non-commercial, and informational purposes, which covers screenshots
+        kept for research. robots.txt disallows only member login, statement,
+        and e-mail asset paths.
       reviewed_on:
 
 # Run order. Grouped by site so a sweep's per-site politeness delay costs as
