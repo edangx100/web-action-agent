@@ -50,7 +50,7 @@ sites:
         hyperlinking to internal pages from another website needs permission.
         robots.txt allows all pages the tasks use; it disallows only
         subscription and e-book paths.
-      reviewed_on:
+      reviewed_on: 2026-10-09
 
   - id: moe
     name: Ministry of Education
@@ -67,7 +67,7 @@ sites:
         No clause on robots or automated access. Commercial reuse of content
         needs written permission (fair dealing for research is allowed).
         robots.txt allows everything.
-      reviewed_on:
+      reviewed_on: 2026-10-09
 
   - id: iras
     name: Inland Revenue Authority of Singapore
@@ -83,7 +83,7 @@ sites:
         hyperlinking to or framing internal pages from another website needs
         permission. There is no robots.txt (the URL serves a not-found page),
         so nothing is disallowed.
-      reviewed_on:
+      reviewed_on: 2026-10-09
 
   - id: singstat
     name: Singapore Department of Statistics
@@ -98,7 +98,7 @@ sites:
         robots.txt allows everything but asks for a crawl delay of 2 seconds,
         longer than the agent's default politeness delay of about 1 second;
         at three trials of two tasks the total load is a handful of page loads.
-      reviewed_on:
+      reviewed_on: 2026-10-09
 
   # Do not use a CPF task as the committed example run. Its screenshots would
   # publish copies of CPF's pages, and CPF's terms are the only ones here that
@@ -123,7 +123,7 @@ sites:
         non-commercial, and informational purposes, which covers screenshots
         kept for research. robots.txt disallows only member login, statement,
         and e-mail asset paths.
-      reviewed_on:
+      reviewed_on: 2026-10-09
 
 # Run order. Grouped by site so a sweep's per-site politeness delay costs as
 # little wall-clock time as possible.
