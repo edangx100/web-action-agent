@@ -38,31 +38,27 @@ from __future__ import annotations
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 import typer
 from pydantic import ValidationError
 
-from web_action_agent.allowlist import Allowlist, AllowlistError
+from web_action_agent.agent_run import RunSetupError, run_agent
+from web_action_agent.allowlist import Allowlist
+from web_action_agent.benchmark import BenchmarkError, load_suite
 from web_action_agent.browser import BrowserProcess, BrowserSettings
 from web_action_agent.capabilities import report_capabilities
 from web_action_agent.config import Config, ConfigError, flag_for, load_config, resolve_env
-from web_action_agent.controller import Controller, RunReport
+from web_action_agent.controller import RunReport
+from web_action_agent.eval_harness import Harness, HarnessError, default_sweep_dir
 from web_action_agent.executor import Executor
 from web_action_agent.inducer import Inducer, InductionError
-from web_action_agent.judge import independence_problem
-from web_action_agent.memory import Memory
+from web_action_agent.judge import Judge, independence_problem
 from web_action_agent.model_client import ModelClient, ModelClientError, ProfileError
-from web_action_agent.planner import Planner
-from web_action_agent.politeness import politeness_for_run
-from web_action_agent.replay import SkillReplayer
-from web_action_agent.reporting import StepListener, TerminalTrace
-from web_action_agent.retrieval import for_url
-from web_action_agent.screenshot_gate import ScreenshotGate
+from web_action_agent.reporting import TerminalTrace
 from web_action_agent.skill_schema import Skill
 from web_action_agent.skill_store import SkillStore, SkillStoreError
-from web_action_agent.timeouts import RunBudget
-from web_action_agent.trace import TraceError, TraceWriter
+from web_action_agent.trace import TraceError
 from web_action_agent.trace_reader import read_run
 from web_action_agent.validator import Validator
 from web_action_agent.verifier import SkillVerifier, Verification, VerificationError
@@ -227,81 +223,31 @@ def _do_one_task(config: Config, task: str) -> int:
     folder = RUNS_ROOT / datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
     try:
         client = ModelClient.from_config(config)
-        allowlist = Allowlist.derive(config.start_url, config_extra=config.allowlist_extra)
-        # Opened before the browser starts, and before anything is spent: a run
-        # whose folder cannot be written is a run that would produce no
-        # evidence, and finding that out after paying for twenty model calls
-        # would be finding it out too late.
-        trace = TraceWriter.open(
-            folder,
-            task=task,
-            start_url=config.start_url,
-            config=config,
-            # A fact about the endpoint, not a setting, so the run folder is
-            # where it belongs: a reader of the trace should be told once that
-            # the model could not see, rather than deducing it from every
-            # step's screenshot trigger.
-            text_only=not client.supports_vision,
-        )
-    except (ModelClientError, AllowlistError, TraceError) as error:
+    except ModelClientError as error:
+        typer.echo(f"waa: {error}", err=True)
+        return EXIT_USAGE
+
+    # One browser process, one task, one context inside it -- the same shape a
+    # benchmark worker uses, and the same assembly, so an ad-hoc run and a
+    # measured one are the same agent. Everything the watcher sees goes to
+    # standard error, so that standard output carries the answer alone.
+    try:
+        with BrowserProcess(BrowserSettings.from_config(config)) as browser:
+            finished = run_agent(
+                config,
+                task,
+                client=client,
+                folder=folder,
+                browser=browser,
+                library=SkillStore.from_config(config, SKILLS_ROOT),
+                write=lambda line: typer.echo(line, err=True),
+            )
+    except RunSetupError as error:
         # Nothing has been attempted and nothing spent: the fix is to the
         # configuration, which is what exit code 2 means.
         typer.echo(f"waa: {error}", err=True)
         return EXIT_USAGE
-
-    throttle, robots = politeness_for_run(config)
-    # Everything the watcher sees goes to standard error, so that standard
-    # output carries the answer alone and `waa run ... > answer.txt` is useful.
-    watching = TerminalTrace(lambda line: typer.echo(line, err=True))
-    watching.opening(task, config.start_url)
-
-    # The library, and the skills from it that belong to this site. Read once,
-    # before the browser starts, so the run works from a fixed list: a library
-    # that changed underneath a run would make two runs of one task
-    # incomparable, which is the thing the whole benchmark rests on.
-    library = SkillStore.from_config(config, SKILLS_ROOT)
-    offered = for_url(library.load_all(), config.start_url)
-    if offered.skills:
-        watching.write(f"skills: {offered.summary()}")
-
-    # One browser process, one task, one context inside it -- the same shape a
-    # benchmark worker uses, so an ad-hoc run and a measured one behave alike.
-    with (
-        BrowserProcess(BrowserSettings.from_config(config)) as browser,
-        browser.task_session() as session,
-    ):
-        executor = Executor(
-            session,
-            action_timeout_s=config.action_timeout_s,
-            throttle=throttle,
-        )
-        # The gate is told about the library so that `use_skill` is an action
-        # at all: without one it refuses every invocation, which is right for a
-        # run that has nothing to replay.
-        validator = Validator(allowlist, robots=robots, skills=library)
-        controller = Controller(
-            planner=Planner(client),
-            validator=validator,
-            executor=executor,
-            memory=Memory.from_config(config),
-            max_steps=config.max_steps,
-            retry_budget=config.retry_budget,
-            gate=ScreenshotGate.from_config(config, supports_vision=client.supports_vision),
-            budget=RunBudget.from_config(config),
-            screenshot_dir=trace.screenshot_dir,
-            config=config,
-            trace=trace,
-            skills=offered.lines,
-            replay=SkillReplayer(
-                executor=executor,
-                validator=validator,
-                config=config,
-                library=library,
-                screenshot_dir=trace.screenshot_dir,
-            ),
-            on_step=_watch_and_tally(watching, library),
-        )
-        report = controller.run(task, start_url=config.start_url)
+    report, watching = finished.report, finished.watching
 
     exit_code = EXIT_SUCCESS if report.outcome.ok else EXIT_TASK_FAILURE
     _report_run(report, folder, watching, exit_code)
@@ -506,49 +452,6 @@ def _describe_skill(skill: Skill) -> list[str]:
     return lines
 
 
-def _watch_and_tally(watching: TerminalTrace, library: SkillStore) -> StepListener:
-    """Show each finished step, and write down how any replay in it went.
-
-    Two things happen to a step and they belong to different components, so
-    they are joined here rather than inside either: the terminal shows it, and
-    the library counts it. The library's count is what eventually retires a
-    skill that a site has changed under, and the only moment that count can
-    change is when a replay finishes.
-
-    What is counted is whether the *recipe* worked, not whether the run did. A
-    replay that handed control back after two steps may be part of a run that
-    goes on to succeed by hand -- a good outcome for the task, and still a
-    failure of the skill.
-
-    Args:
-        watching: The terminal trace streaming the run.
-        library: The skill library to record the use in.
-
-    Returns:
-        StepListener: The callback the loop calls as each step completes.
-    """
-
-    def on_step(step: Any) -> None:
-        """Show one step, and tally it if it replayed a skill.
-
-        Args:
-            step: The step the controller has just finished.
-        """
-        watching.step(step)
-        if step.replay is None:
-            return
-        try:
-            library.record_use(step.replay.skill, succeeded=step.replay.ok)
-        except SkillStoreError as error:
-            # Bookkeeping that cannot be written must not end a run that is
-            # otherwise working. Said out loud rather than swallowed, because a
-            # library silently stopping counting is how a skill that has
-            # stopped working stays in service forever.
-            watching.write(f"warning: could not record the use of {step.replay.skill!r}: {error}")
-
-    return on_step
-
-
 def _report_run(
     report: RunReport,
     folder: Path,
@@ -662,6 +565,17 @@ def eval_command(
             help="Run with an empty skill library (cold) or the learned one (warm).",
         ),
     ] = True,
+    workers: Annotated[
+        int | None,
+        typer.Option("--workers", min=1, help="Trials to run at once. Default from config."),
+    ] = None,
+    out: Annotated[
+        Path | None,
+        typer.Option(
+            "--out",
+            help="Sweep folder. Default runs/eval-<profile>-<cold|warm>; rerun to resume.",
+        ),
+    ] = None,
     profile: ProfileOption = None,
     headed: HeadedOption = None,
 ) -> None:
@@ -671,17 +585,66 @@ def eval_command(
     other, never both and never neither. Writing it ``--cold/--warm`` makes
     that true by construction, so there is no invalid combination to check for.
 
+    Running the same command again carries on where it stopped: trials already
+    finished and marked are skipped, and a run that was killed partway is done
+    again from the start.
+
     Args:
         suite: The suite manifest, which lists the benchmark tasks.
         trials: How many times to repeat each task.
         cold: True for an empty skill library, False for the learned one.
+        workers: How many trials run at once, or None for the configured
+            number.
+        out: The sweep's folder, or None for the default, which is named
+            after what the sweep measures so that a rerun finds it.
         profile: Endpoint profile for the sweep. This is the only thing that
             changes between arms of the multi-model comparison.
         headed: True to show the browser windows, False to hide them, None
             to leave the setting as the configuration files have it.
+
+    Raises:
+        typer.Exit: :data:`EXIT_SUCCESS` when every trial has a mark (pass or
+            fail -- a failed task is a result, not an error),
+            :data:`EXIT_TASK_FAILURE` when some trial was left without one
+            and a rerun is needed, and :data:`EXIT_USAGE` when the sweep could
+            not start at all.
     """
-    _startup(profile=profile, headed=headed)
-    _not_built_yet(f"the benchmark harness ({'cold' if cold else 'warm'}, {trials} trials)")
+    config = _startup(profile=profile, headed=headed)
+    try:
+        loaded = load_suite(suite)
+        judge = Judge.from_config(config) if config.judge_profile else None
+    except (BenchmarkError, ConfigError, ModelClientError) as error:
+        typer.echo(f"waa: {error}", err=True)
+        raise typer.Exit(EXIT_USAGE) from error
+    if judge is None:
+        typer.echo(
+            "waa: no judge configured: tasks marked by the judge will wait for one",
+            err=True,
+        )
+
+    harness = Harness(
+        config,
+        loaded,
+        out or default_sweep_dir(RUNS_ROOT, config.profile, cold),
+        trials=trials,
+        cold=cold,
+        workers=workers,
+        skills_root=SKILLS_ROOT,
+        judge=judge,
+        log=lambda line: typer.echo(line, err=True),
+    )
+    try:
+        report = harness.run()
+    except HarnessError as error:
+        typer.echo(f"waa: {error}", err=True)
+        raise typer.Exit(EXIT_USAGE) from error
+
+    typer.echo(report.summary())
+    typer.echo(f"results: {report.folder}")
+    unmarked = [
+        r for r in report.results if r.verdict is None or r.verdict.status not in ("pass", "fail")
+    ]
+    raise typer.Exit(EXIT_TASK_FAILURE if unmarked else EXIT_SUCCESS)
 
 
 @app.command(

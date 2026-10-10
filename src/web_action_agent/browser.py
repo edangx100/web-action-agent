@@ -437,9 +437,10 @@ class BrowserProcess:
                     run(task, session)
 
     Not thread-safe, and not meant to be: Playwright's synchronous API belongs
-    to the thread that started it. Parallel benchmark workers each run their
-    own process, which is also what keeps one worker's crash from taking the
-    others down.
+    to the thread that started it. Parallel benchmark workers each start
+    their own, in their own thread, so each worker has its own driver and its
+    own browser process; one browser crashing takes down that worker's
+    current trial, not the others.
 
     Attributes:
         settings: The viewport, timeout and headedness this browser was

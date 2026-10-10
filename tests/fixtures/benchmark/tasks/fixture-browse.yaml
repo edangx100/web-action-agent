@@ -1,0 +1,10 @@
+id: fixture-browse
+site: fixture
+difficulty: multi_page_navigation
+start_url: https://fixture.test/browse.html
+instruction: Open this page and report the name of the library.
+verdicts:
+  - method: answer_matches
+    accepted: ["Northgate Public Library"]
+  - method: url_contains
+    value: browse.html

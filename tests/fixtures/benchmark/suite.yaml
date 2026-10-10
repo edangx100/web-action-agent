@@ -1,0 +1,29 @@
+# A small benchmark suite on the local practice website, for testing the
+# harness. Not a measurement of anything: the tasks are trivial on purpose, so
+# that a test of running many trials at once spends its time on the running,
+# not on the tasks.
+#
+# The start URLs name `fixture.test`, a placeholder. The site is served on a
+# local port chosen when the tests start, so the tests swap the real address
+# in after loading. The placeholder keeps the files valid on their own.
+
+name: fixture-suite
+description: Five one-page tasks on the local practice website.
+
+sites:
+  - id: fixture
+    name: Northgate Public Library (practice site)
+    domain: fixture.test
+    consent_steps: 0
+    terms:
+      terms_url: https://fixture.test/terms
+      robots_url: https://fixture.test/robots.txt
+      summary: The project's own local test site, served only to the tests.
+      reviewed_on: 2026-10-11
+
+tasks:
+  - fixture-home
+  - fixture-search
+  - fixture-browse
+  - fixture-article
+  - fixture-shelves

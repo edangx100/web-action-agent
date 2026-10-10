@@ -1,0 +1,10 @@
+id: fixture-home
+site: fixture
+difficulty: single_page_search
+start_url: https://fixture.test/index.html
+instruction: Open this page and report the name of the library.
+verdicts:
+  - method: answer_matches
+    accepted: ["Northgate Public Library"]
+  - method: url_contains
+    value: index.html
