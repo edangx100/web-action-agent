@@ -55,10 +55,10 @@ VISION = "vision"
 #: The capability that grades a run. Evaluation only; see the module docstring.
 JUDGE = "judge"
 
-#: Variables describing the judge endpoint. They are read here directly rather
-#: than through :class:`~web_action_agent.config.Config`, because the judge is
-#: not yet a configured component — this module reports on it before anything
-#: exists that could run it, which is the whole point of a startup check.
+#: Variables describing the judge endpoint. The profile is also a setting --
+#: ``judge_profile`` in the configuration, which this variable sets like any
+#: other -- and the report reads it from there. The other three describe an
+#: ad-hoc judge with no profile of its own, and are read here directly.
 JUDGE_PROFILE_ENV = "WAA_JUDGE_PROFILE"
 JUDGE_BASE_URL_ENV = "WAA_JUDGE_BASE_URL"
 JUDGE_API_KEY_ENV = "WAA_JUDGE_API_KEY"
@@ -200,14 +200,21 @@ def _agent_capability(
     return agent, vision
 
 
-def _judge_capability(env: Mapping[str, str], profiles_path: Path | None) -> Capability:
+def _judge_capability(
+    config: Config, env: Mapping[str, str], profiles_path: Path | None
+) -> Capability:
     """Resolve whether a judge endpoint is configured and has a key.
 
     Two ways of naming one are accepted, matching the two ways the endpoint is
     described elsewhere: a profile by name, or an ad-hoc base URL and key for a
     judge that has no profile of its own.
 
+    A named judge is also checked against the planner: one from the planner's
+    own family of models is reported as unavailable, with the reason.
+
     Args:
+        config: The resolved settings, whose ``judge_profile`` names the judge
+            profile, and whose planner profile the judge is checked against.
         env: The environment to read from.
         profiles_path: Profiles file, or None for the packaged one.
 
@@ -222,7 +229,10 @@ def _judge_capability(env: Mapping[str, str], profiles_path: Path | None) -> Cap
         f"with {JUDGE_API_KEY_ENV}. Needed to reproduce the evaluation, not to run a task",
     )
 
-    profile_name = (env.get(JUDGE_PROFILE_ENV) or "").strip()
+    # The setting, which the environment variable also sets through the usual
+    # layers; the variable is read directly too, for a caller that resolved
+    # the configuration from a different environment than this one.
+    profile_name = (config.judge_profile or env.get(JUDGE_PROFILE_ENV) or "").strip()
     if profile_name:
         try:
             profile = load_profile(profile_name, path=profiles_path)
@@ -232,6 +242,15 @@ def _judge_capability(env: Mapping[str, str], profiles_path: Path | None) -> Cap
             resolve_api_key(profile, env)
         except MissingAPIKeyError as error:
             return Capability(JUDGE, False, str(error))
+        # Imported here: the judge module imports this package's config and
+        # model layers, and the capability report must stay importable alone.
+        from web_action_agent.judge import independence_problem
+
+        problem = independence_problem(
+            config.model_copy(update={"judge_profile": profile_name}), profiles_path=profiles_path
+        )
+        if problem is not None:
+            return Capability(JUDGE, False, problem)
         return Capability(JUDGE, True, f"profile {profile.name!r} -> {profile.model}")
 
     base_url = (env.get(JUDGE_BASE_URL_ENV) or "").strip()
@@ -251,6 +270,19 @@ def _judge_capability(env: Mapping[str, str], profiles_path: Path | None) -> Cap
             JUDGE,
             False,
             f"{JUDGE_BASE_URL_ENV} is set but {JUDGE_MODEL_ENV} is not",
+        )
+    from web_action_agent.judge import family_clash
+
+    try:
+        clash = family_clash(resolve_profile(config, path=profiles_path), (model,))
+    except ProfileError:
+        clash = None
+    if clash is not None:
+        return Capability(
+            JUDGE,
+            False,
+            f"{JUDGE_MODEL_ENV} {model!r} is in the same family as the planner's "
+            f"{clash[0]!r}; the judge must come from a different family",
         )
     return Capability(JUDGE, True, f"{JUDGE_BASE_URL_ENV} -> {model}")
 
@@ -279,4 +311,4 @@ def report_capabilities(
     """
     resolved = env if env is not None else resolve_env()
     agent, vision = _agent_capability(config, resolved, profiles_path)
-    return CapabilityReport((agent, vision, _judge_capability(resolved, profiles_path)))
+    return CapabilityReport((agent, vision, _judge_capability(config, resolved, profiles_path)))

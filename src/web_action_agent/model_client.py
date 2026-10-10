@@ -833,8 +833,13 @@ def system_message(text: str) -> dict[str, Any]:
     return {"role": "system", "content": text}
 
 
-def user_message(text: str, *, screenshot_png: bytes | None = None) -> dict[str, Any]:
-    """Build a user message, optionally carrying a screenshot.
+def user_message(
+    text: str,
+    *,
+    screenshot_png: bytes | None = None,
+    screenshots_png: Sequence[bytes] = (),
+) -> dict[str, Any]:
+    """Build a user message, optionally carrying one or more screenshots.
 
     Keeping the image encoding here means the observer hands over PNG bytes and
     never learns how a chat API spells an attachment; if that spelling changes,
@@ -845,23 +850,27 @@ def user_message(text: str, *, screenshot_png: bytes | None = None) -> dict[str,
         screenshot_png: PNG bytes of the annotated screenshot, or None for a
             text-only observation. Present bytes make this a vision call, which
             in turn selects the profile's vision route.
+        screenshots_png: Several PNG images, in the order they should be seen,
+            for a caller that shows more than one -- the judge looks at the
+            last few pages of a run. Sent after ``screenshot_png`` if both are
+            given.
 
     Returns:
         dict[str, Any]: A chat message in the wire format.
     """
-    if screenshot_png is None:
+    images = ([screenshot_png] if screenshot_png is not None else []) + list(screenshots_png)
+    if not images:
         return {"role": "user", "content": text}
 
-    encoded = base64.b64encode(screenshot_png).decode("ascii")
-    return {
-        "role": "user",
-        "content": [
-            {"type": "text", "text": text},
-            # Inline data URL rather than a hosted URL: the screenshots are
-            # local, transient, and not worth uploading anywhere.
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}},
-        ],
-    }
+    content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    for png in images:
+        encoded = base64.b64encode(png).decode("ascii")
+        # Inline data URL rather than a hosted URL: the screenshots are
+        # local, transient, and not worth uploading anywhere.
+        content.append(
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}
+        )
+    return {"role": "user", "content": content}
 
 
 def has_image(messages: Sequence[Mapping[str, Any]]) -> bool:

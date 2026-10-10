@@ -45,11 +45,12 @@ from pydantic import ValidationError
 
 from web_action_agent.allowlist import Allowlist, AllowlistError
 from web_action_agent.browser import BrowserProcess, BrowserSettings
-from web_action_agent.capabilities import JUDGE_PROFILE_ENV, report_capabilities
+from web_action_agent.capabilities import report_capabilities
 from web_action_agent.config import Config, ConfigError, flag_for, load_config, resolve_env
 from web_action_agent.controller import Controller, RunReport
 from web_action_agent.executor import Executor
 from web_action_agent.inducer import Inducer, InductionError
+from web_action_agent.judge import independence_problem
 from web_action_agent.memory import Memory
 from web_action_agent.model_client import ModelClient, ModelClientError, ProfileError
 from web_action_agent.planner import Planner
@@ -193,6 +194,14 @@ def _startup(**overrides: object) -> Config:
         raise typer.Exit(EXIT_USAGE) from error
 
     typer.echo(report_capabilities(config, env=env).render(), err=True)
+
+    # A judge from the planner's own family of models is refused here, before
+    # anything runs, rather than when the first run is marked: by then a
+    # whole sweep may have been paid for with no way to mark it fairly.
+    problem = independence_problem(config)
+    if problem is not None:
+        typer.echo(f"waa: {problem}", err=True)
+        raise typer.Exit(EXIT_USAGE)
     return config
 
 
@@ -317,7 +326,7 @@ def _judge_for(config: Config) -> ModelClient | None:
         says out loud which of the two happened, so a library checked without a
         judge cannot be mistaken for one checked with.
     """
-    name = (resolve_env().get(JUDGE_PROFILE_ENV) or "").strip()
+    name = (config.judge_profile or "").strip()
     if not name:
         return None
     try:

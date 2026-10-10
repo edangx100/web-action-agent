@@ -50,6 +50,16 @@ openrouter:
     checked:
     note: free tier — no price to record, and zero would be a claim
 
+openrouter-judge:
+  # The evaluation judge. Price of the pinned Google AI Studio host, as listed
+  # by OpenRouter's endpoint list for this model. Images are billed as input
+  # tokens at the same rate.
+  google/gemini-3.8-flash:
+    input_usd_per_mtok: 0.75
+    output_usd_per_mtok: 3.75
+    checked: "2026-10-10"
+    note: judge; Google AI Studio standard tier (not flex or priority)
+
 nvidia:
   # First-party endpoint.
   nvidia/nemotron-3-nano-30b-a3b:

@@ -25,6 +25,16 @@
 # profiles.yaml. This setting picks one of them: openrouter, nvidia, or local.
 profile: openrouter
 
+# The evaluation judge: a second, stronger model that marks benchmark runs
+# whose answer plain code cannot check. Left empty, there is no judge: running
+# a task never needs one, and nothing spends money on judging unless asked.
+# Set it (here, or as WAA_JUDGE_PROFILE in .env) to mark a benchmark or to let
+# `waa induce` check candidate skills with a second model. It must come from a
+# different family of models than the planner's profile -- the agent is not
+# marked by its own kind -- and the program refuses to start otherwise.
+# openrouter-judge is provided: Gemini 3.8 Flash, on the same OpenRouter key.
+judge_profile:
+
 # Ad-hoc overrides of the selected profile, for cases profiles.yaml cannot
 # anticipate: a self-hosted server on another host, or one run against a
 # different model. Left empty, the profile's own values stand.

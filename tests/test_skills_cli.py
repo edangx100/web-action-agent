@@ -321,7 +321,9 @@ def test_a_candidate_is_checked_against_a_live_page_before_it_is_stored(
     runs = a_workspace(monkeypatch, tmp_path, playwright, endpoint)
     folder = put_run(runs, "first")
     _point_at(folder, fixture_site)
-    monkeypatch.setattr(cli, "resolve_env", lambda: {"WAA_JUDGE_PROFILE": "local"})
+    # A judge from another family than the planner's, or the command refuses
+    # to start. The model behind it is the script either way.
+    monkeypatch.setattr(cli, "resolve_env", lambda: {"WAA_JUDGE_PROFILE": "openrouter-judge"})
 
     result = invoke(["induce", str(folder)])
 
@@ -345,7 +347,9 @@ def test_a_candidate_that_fails_its_check_is_discarded_with_a_reason(
     runs = a_workspace(monkeypatch, tmp_path, playwright, endpoint)
     folder = put_run(runs, "first")
     _point_at(folder, fixture_site)
-    monkeypatch.setattr(cli, "resolve_env", lambda: {"WAA_JUDGE_PROFILE": "local"})
+    # A judge from another family than the planner's, or the command refuses
+    # to start. The model behind it is the script either way.
+    monkeypatch.setattr(cli, "resolve_env", lambda: {"WAA_JUDGE_PROFILE": "openrouter-judge"})
 
     result = invoke(["induce", str(folder)])
 

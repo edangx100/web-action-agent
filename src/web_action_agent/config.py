@@ -169,6 +169,15 @@ class Config(BaseModel):
     # An API key is deliberately not a field here. Adding one would make it
     # writable in the committed config.yaml; keys are read from the environment
     # by the model client alone.
+    judge_profile: str | None = Field(
+        default=None,
+        description=(
+            "Profile in profiles.yaml for the evaluation judge, which marks "
+            "finished runs. Must be a different family of models from the "
+            "planner's, checked at startup. Empty means no judge: running a "
+            "task needs none, only marking a benchmark does."
+        ),
+    )
 
     # --- Agent loop ---------------------------------------------------------
     max_steps: int = Field(

@@ -465,13 +465,22 @@ def test_vision_is_unavailable_where_the_profile_serves_no_vision_model() -> Non
 def test_a_judge_profile_with_a_key_is_available() -> None:
     """One of the two ways to name a judge: a profile from the packaged file."""
     report = report_for(
+        env_with(WAA_OPENROUTER_API_KEY=A_KEY, **{JUDGE_PROFILE_ENV: "openrouter-judge"})
+    )
+    assert report.can(JUDGE)
+    assert "gemini" in report.get(JUDGE).detail
+
+
+def test_a_judge_from_the_planners_family_is_reported_unavailable() -> None:
+    """The nvidia profile is Nemotron, the same family as the planner."""
+    report = report_for(
         env_with(
             WAA_OPENROUTER_API_KEY=A_KEY,
             **{JUDGE_PROFILE_ENV: "nvidia", "WAA_NVIDIA_API_KEY": ANOTHER_KEY},
         )
     )
-    assert report.can(JUDGE)
-    assert "nvidia" in report.get(JUDGE).detail
+    assert not report.can(JUDGE)
+    assert "same family" in report.get(JUDGE).detail
 
 
 def test_an_ad_hoc_judge_endpoint_is_available_when_fully_described() -> None:
@@ -488,6 +497,22 @@ def test_an_ad_hoc_judge_endpoint_is_available_when_fully_described() -> None:
     )
     assert report.can(JUDGE)
     assert "a-stronger-model" in report.get(JUDGE).detail
+
+
+def test_an_ad_hoc_judge_from_the_planners_family_is_reported_unavailable() -> None:
+    """The family rule applies to a judge with no profile of its own too."""
+    report = report_for(
+        env_with(
+            WAA_OPENROUTER_API_KEY=A_KEY,
+            **{
+                JUDGE_BASE_URL_ENV: "https://example.test/v1",
+                JUDGE_API_KEY_ENV: ANOTHER_KEY,
+                JUDGE_MODEL_ENV: "nvidia/nemotron-ultra-253b",
+            },
+        )
+    )
+    assert not report.can(JUDGE)
+    assert "same family" in report.get(JUDGE).detail
 
 
 @pytest.mark.parametrize("omitted", [JUDGE_API_KEY_ENV, JUDGE_MODEL_ENV])

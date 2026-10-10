@@ -81,3 +81,30 @@ local:
     provider_order: []
     supports_json_schema: true
   vision: null
+
+openrouter-judge:
+  # The evaluation judge, not a planner. It marks the agent's runs, so it must
+  # come from a different family of models than the planner above -- a model
+  # is more likely to accept an answer that looks like its own -- and the
+  # program refuses to start if it does not. It must also be stronger, and it
+  # must read screenshots, because the final page is the evidence.
+  #
+  # Gemini 3.8 Flash: a different vendor and line (google/gemini, against
+  # nvidia/nemotron), reads images, and honours both temperature 0 and
+  # schema-constrained answers on the Google AI Studio host, which is why that
+  # host is pinned. Several Claude models were also considered; on this
+  # aggregator they do not accept a temperature setting, and the judge must run
+  # at temperature 0 so that a verdict can be recomputed.
+  #
+  # Uses the same OpenRouter key as the planner: no second account.
+  base_url: https://openrouter.ai/api/v1
+  api_key_env: WAA_OPENROUTER_API_KEY
+  api_key_required: true
+  text:
+    model: google/gemini-3.8-flash
+    provider_order: [Google AI Studio]
+    supports_json_schema: true
+  vision:
+    model: google/gemini-3.8-flash
+    provider_order: [Google AI Studio]
+    supports_json_schema: true
