@@ -33,6 +33,14 @@ can be traced back to the screenshots and steps that produced it.
 date. Each table says when its sweep started and when its last trial was
 marked.
 
+**Every failure says what kind it was, or there is no table.** A failure
+with no category -- grounding, planning, navigation, or site change -- would
+be a blank cell nobody chases, and the failure analysis the project publishes
+would quietly cover only some of the failures. So :func:`check_categories`
+runs before anything is written, and stops with a list of every such failure
+and how to fix it. A pass that carries a category is stopped the same way:
+it means the mark was made inconsistently.
+
 **Only marked trials count.** A trial with no pass or fail yet -- a judging
 error, or waiting for a judge -- is left out of the rates and counted on its
 own line, so it can neither help nor hurt the score without anyone noticing.
@@ -408,6 +416,54 @@ def raw_agreement(rows: Iterable[TrialRow], labels: dict[str, bool]) -> tuple[in
     return agree, total
 
 
+# --- Every failure categorised -------------------------------------------------------
+
+
+def category_problems(rows: Iterable[TrialRow]) -> list[str]:
+    """List every trial whose category does not fit its verdict.
+
+    Args:
+        rows: Trial results.
+
+    Returns:
+        list[str]: One line per problem, naming the trial's folder: a fail
+        whose category is missing or not one of the four, or a pass that
+        carries a category. Empty when every trial is consistent.
+    """
+    problems: list[str] = []
+    for row in rows:
+        if row.status == FAIL and row.category not in FAILURE_CATEGORIES:
+            found = "no category" if row.category is None else f"category {row.category!r}"
+            problems.append(f"{row.folder}: a fail with {found}")
+        elif row.status == PASS and row.category is not None:
+            problems.append(f"{row.folder}: a pass that carries category {row.category!r}")
+    return problems
+
+
+def check_categories(sweeps: Iterable[SweepResults]) -> None:
+    """Refuse to tabulate sweeps with a failure that does not say what kind.
+
+    Args:
+        sweeps: The sweeps about to be written.
+
+    Raises:
+        MetricsError: Listing every problem, and how to fix the usual one.
+            Raised before any file is written, so a refusal never leaves half
+            the tables updated and half stale.
+    """
+    problems = [line for sweep in sweeps for line in category_problems(sweep.rows)]
+    if problems:
+        raise MetricsError(
+            f"{len(problems)} trial(s) cannot go in a results table, because every failure "
+            "must say what kind it was (grounding, planning, navigation, or site_change):\n  "
+            + "\n  ".join(problems)
+            + "\nA fail with no category usually means no judge was configured, or the "
+            "judge could not be reached. Set WAA_JUDGE_PROFILE (for example "
+            "openrouter-judge) and run the same `waa eval` command again: it fills in "
+            "the missing categories without running the trials again."
+        )
+
+
 # --- The tables ---------------------------------------------------------------------
 
 
@@ -445,7 +501,12 @@ def sweep_table(results: SweepResults, results_dir: Path, labels: dict[str, bool
 
     Returns:
         str: The whole Markdown document.
+
+    Raises:
+        MetricsError: If any failure has no category; see
+            :func:`check_categories`.
     """
+    check_categories([results])
     spec = results.spec
     rate = success_rate(results.rows)
     overall = averages(results.marked)
@@ -520,13 +581,10 @@ def sweep_table(results: SweepResults, results_dir: Path, labels: dict[str, bool
         "",
         "## Failures by kind",
         "",
-        "| " + " | ".join([*FAILURE_CATEGORIES, "uncategorized"]) + " |",
-        "|" + "---|" * (len(FAILURE_CATEGORIES) + 1),
+        "| " + " | ".join(FAILURE_CATEGORIES) + " |",
+        "|" + "---|" * len(FAILURE_CATEGORIES),
         "| "
-        + " | ".join(
-            [str(sum(r.category == c for r in failures)) for c in FAILURE_CATEGORIES]
-            + [str(sum(r.category not in FAILURE_CATEGORIES for r in failures))]
-        )
+        + " | ".join(str(sum(r.category == c for r in failures)) for c in FAILURE_CATEGORIES)
         + " |",
         "",
         "## Every verdict",
@@ -537,7 +595,7 @@ def sweep_table(results: SweepResults, results_dir: Path, labels: dict[str, bool
         "|---|---|---|---|---|---|---|",
     ]
     for row in results.rows:
-        kind = row.category or ("uncategorized" if row.status == FAIL else "")
+        kind = row.category or ""
         lines.append(
             f"| {row.task_id} | {row.trial} | {row.status} | {kind} | {row.steps} | "
             f"{_cell(row.reason)} | [run]({_link(row.folder, results_dir)}) |"
@@ -611,11 +669,14 @@ def write_results(sweep_dirs: Iterable[Path], results_dir: Path) -> list[Path]:
         list[Path]: The files written: one per sweep, then the comparison.
 
     Raises:
-        MetricsError: If a folder is not a sweep folder.
+        MetricsError: If a folder is not a sweep folder, or any failure in
+            any of the sweeps has no category. Checked for every sweep before
+            any file is written.
     """
+    sweeps = [load_sweep(folder) for folder in sweep_dirs]
+    check_categories(sweeps)
     results_dir.mkdir(parents=True, exist_ok=True)
     labels = read_human_labels(results_dir / HUMAN_LABELS_FILE)
-    sweeps = [load_sweep(folder) for folder in sweep_dirs]
     written: list[Path] = []
     for sweep in sweeps:
         path = results_dir / f"{sweep.name}.md"

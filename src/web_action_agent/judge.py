@@ -32,6 +32,14 @@ that the agent's own claim of success is not evidence.
   The categories are what turns a success rate into something useful: "62%"
   says how often the agent works, and the categories say what to fix.
 
+**Every failure gets exactly one category.** Not every failure is decided by
+the judge: an agent that ran out of steps, or a wrong answer caught by a
+machine check, has already failed before the judge is involved. For those,
+:meth:`Judge.categorize` asks a narrower question -- "this run failed, for
+this reason; which of the four kinds of failure was it?" -- whose only valid
+answers are the four categories. The judge is told not to decide pass or
+fail again, and cannot: there is no "passed" in that answer, and no "none".
+
 **Nothing grades its own homework.** The judge must come from a different
 *family* of models than the agent it marks. A model is much more likely to
 accept an answer that looks like one it would have given. So
@@ -104,6 +112,9 @@ SCREENSHOTS_SHOWN = 3
 
 #: Name for the answer's schema in the request.
 SCHEMA_NAME = "judge_verdict"
+
+#: Name for the narrower answer's schema, when only the category is asked for.
+CATEGORY_SCHEMA_NAME = "failure_category"
 
 
 class JudgeConfigError(ConfigError):
@@ -403,6 +414,53 @@ def parse_verdict(data: dict[str, Any], *, raw_reply: str, model: str = "") -> J
     return JudgeVerdict(FAIL, justification=justification.strip(), category=category, model=model)
 
 
+def category_schema() -> dict[str, Any]:
+    """Describe the answer when only the kind of failure is asked for.
+
+    Returns:
+        dict[str, Any]: A JSON Schema with a category from the four kinds --
+        not ``none``, since the run has already failed -- and one sentence.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "category": {"type": "string", "enum": list(FAILURE_CATEGORIES)},
+            "justification": {"type": "string", "description": "one sentence"},
+        },
+        "required": ["category", "justification"],
+        "additionalProperties": False,
+    }
+
+
+def parse_category(data: dict[str, Any], *, raw_reply: str, model: str = "") -> JudgeVerdict:
+    """Turn a category-only reply into a categorised fail, or a judging error.
+
+    Args:
+        data: The reply, already read as JSON.
+        raw_reply: The reply text, kept on a judging error.
+        model: Which model replied.
+
+    Returns:
+        JudgeVerdict: A fail with exactly one of the four categories, or a
+        judging error naming what was wrong -- a missing or unknown category,
+        ``none``, or no justification.
+    """
+    category = data.get("category")
+    if category not in FAILURE_CATEGORIES:
+        return JudgeVerdict(
+            JUDGING_ERROR,
+            error=f"'category' must be one of {list(FAILURE_CATEGORIES)}, got {category!r}",
+            raw_reply=raw_reply,
+            model=model,
+        )
+    justification = data.get("justification")
+    if not isinstance(justification, str) or not justification.strip():
+        return JudgeVerdict(
+            JUDGING_ERROR, error="the reply has no justification", raw_reply=raw_reply, model=model
+        )
+    return JudgeVerdict(FAIL, justification=justification.strip(), category=category, model=model)
+
+
 # --- The judge -----------------------------------------------------------------------
 
 
@@ -503,15 +561,66 @@ class Judge:
             those are recorded as judging errors, so a sweep of a hundred runs
             is not stopped by one bad reply.
         """
+        return self._ask(run, render_case(task, run), verdict_schema(), SCHEMA_NAME, parse_verdict)
+
+    def categorize(self, task: BenchmarkTask, run: ReplayedRun, reason: str) -> JudgeVerdict:
+        """Ask only which kind of failure a run that has already failed was.
+
+        For a run failed by something other than the judge -- the agent ran
+        out of steps, a machine check caught a wrong answer -- so that it still
+        gets exactly one category. Also used when the judge's own pass/fail
+        disagrees with the machine checks: the machine checks decide, and the
+        judge is asked to explain the failure they found.
+
+        Args:
+            task: The task the run attempted.
+            run: The run.
+            reason: Why it was failed, shown to the judge as already decided.
+
+        Returns:
+            JudgeVerdict: A fail with one of the four categories, or a judging
+            error. Never a pass: the answer has no field that could say so.
+        """
+        return self._ask(
+            run,
+            render_case(task, run, decided=reason),
+            category_schema(),
+            CATEGORY_SCHEMA_NAME,
+            parse_category,
+        )
+
+    def _ask(
+        self,
+        run: ReplayedRun,
+        case: str,
+        schema: dict[str, Any],
+        schema_name: str,
+        parse: Any,
+    ) -> JudgeVerdict:
+        """Send one case to the judge and read its answer.
+
+        Shared by :meth:`judge` and :meth:`categorize`, so that both get the
+        same screenshots, temperature, error handling and cost record.
+
+        Args:
+            run: The run, whose last screenshots are attached.
+            case: The case file, as text.
+            schema: The shape the answer must have.
+            schema_name: The schema's name in the request.
+            parse: Turns the parsed answer into a verdict.
+
+        Returns:
+            JudgeVerdict: The parsed verdict, or a judging error.
+        """
         model = self.client.profile.route_for(vision=True).model
         try:
             response = self.client.complete(
                 [
                     system_message(self.instructions),
-                    user_message(render_case(task, run), screenshots_png=_last_screenshots(run)),
+                    user_message(case, screenshots_png=_last_screenshots(run)),
                 ],
-                schema=verdict_schema(),
-                schema_name=SCHEMA_NAME,
+                schema=schema,
+                schema_name=schema_name,
                 temperature=0.0,
             )
         except ModelResponseError as error:
@@ -530,7 +639,7 @@ class Judge:
             )
 
         assert response.data is not None, "a schema was asked for, so the reply was parsed"
-        verdict = parse_verdict(response.data, raw_reply=response.text, model=response.record.model)
+        verdict = parse(response.data, raw_reply=response.text, model=response.record.model)
         # The cost record is attached whatever the outcome: a judging error
         # still cost a call, and a budget that missed it would run over.
         return JudgeVerdict(
@@ -544,12 +653,15 @@ class Judge:
         )
 
 
-def render_case(task: BenchmarkTask, run: ReplayedRun) -> str:
+def render_case(task: BenchmarkTask, run: ReplayedRun, *, decided: str | None = None) -> str:
     """Write out what the judge is shown, as text.
 
     Args:
         task: The task the run attempted.
         run: The run.
+        decided: For a category-only question, why the run was already
+            failed. Shown at the end, with the instruction not to decide pass
+            or fail again.
 
     Returns:
         str: The task, what success looks like, the answer, how the run
@@ -588,6 +700,12 @@ def render_case(task: BenchmarkTask, run: ReplayedRun) -> str:
         f"## The steps it took\n\n{steps or '(none)'}\n\n"
         f"## The screenshots\n\n{screenshot_note} The numbers drawn on them are "
         "labels the agent used to refer to elements, not part of the website.\n"
+        + (
+            f"\n## Already decided: this run failed\n\n{decided}\n\n"
+            "Do not decide pass or fail again. Answer only which kind of failure it was.\n"
+            if decided
+            else ""
+        )
     )
 
 

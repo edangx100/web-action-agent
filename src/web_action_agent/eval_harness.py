@@ -84,7 +84,7 @@ from .browser import BrowserProcess, BrowserSettings
 from .budget import Budget, record_judge_call
 from .checkers import CheckResult, final_state, run_checks
 from .config import Config
-from .judge import FAIL, JUDGING_ERROR, PASS, Judge, JudgeVerdict
+from .judge import FAIL, FAILURE_CATEGORIES, JUDGING_ERROR, PASS, Judge, JudgeVerdict
 from .model_client import ModelClient, ModelClientError, resolve_profile
 from .skill_store import SkillStore
 from .trace import OUTCOME_FILE, TraceError
@@ -193,9 +193,10 @@ def trial_state(folder: Path) -> str:
 
     Returns:
         str: :data:`NEW`, :data:`INTERRUPTED`, :data:`UNMARKED`, or
-        :data:`DONE`. A folder whose mark is a judging error, or which still
-        needs a judge, counts as unmarked, so a restart tries to mark it again
-        without running it again.
+        :data:`DONE`. A folder whose mark is a judging error, which still
+        needs a judge, or which is a fail with no category yet, counts as
+        unmarked, so a restart tries to finish the mark without running the
+        trial again.
     """
     if not folder.exists():
         return NEW
@@ -204,11 +205,8 @@ def trial_state(folder: Path) -> str:
     verdict_path = folder / VERDICT_FILE
     if not verdict_path.exists():
         return UNMARKED
-    try:
-        status = json.loads(verdict_path.read_text(encoding="utf-8")).get("status")
-    except (OSError, json.JSONDecodeError):
-        return UNMARKED
-    return DONE if status in (PASS, FAIL) else UNMARKED
+    verdict = _read_verdict(folder)
+    return DONE if verdict is not None and verdict.complete else UNMARKED
 
 
 # --- Marking -------------------------------------------------------------------
@@ -227,9 +225,12 @@ class TrialVerdict:
         agent_outcome: How the agent's own run ended, such as ``success`` or
             ``step_cap``.
         checks: The machine checks' results, in task-file order.
-        judge: The judge's verdict, when the judge was asked.
-        category: For a fail, which kind of mistake, when the judge was able
-            to say. None otherwise.
+        judge: The judge's pass-or-fail verdict, when the task asked for one.
+        category: For a fail, which kind of mistake: one of the four. None for
+            a pass, and None for a fail that could not be categorised yet --
+            which leaves the mark unfinished (see :attr:`complete`).
+        categorized_by: The judge's answer when it was asked only for the
+            category, for a fail it did not decide itself.
         marked_at: When the mark was made, RFC 3339 in UTC.
     """
 
@@ -239,12 +240,25 @@ class TrialVerdict:
     checks: tuple[CheckResult, ...] = ()
     judge: JudgeVerdict | None = None
     category: str | None = None
+    categorized_by: JudgeVerdict | None = None
     marked_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     @property
     def passed(self) -> bool:
         """bool: True only for a pass."""
         return self.status == PASS
+
+    @property
+    def complete(self) -> bool:
+        """bool: True for a finished mark: a pass, or a fail with its category.
+
+        A fail without a category is a decided result with a missing reason,
+        and every failure must say what kind it was. Counting it as finished
+        would let it reach the results tables as a blank.
+        """
+        if self.status == PASS:
+            return True
+        return self.status == FAIL and self.category in FAILURE_CATEGORIES
 
     def to_dict(self) -> dict[str, Any]:
         """Turn the mark into plain data for ``verdict.json``.
@@ -261,6 +275,9 @@ class TrialVerdict:
             ],
             "judge": self.judge.to_dict() if self.judge is not None else None,
             "category": self.category,
+            "categorized_by": (
+                self.categorized_by.to_dict() if self.categorized_by is not None else None
+            ),
             "marked_at": self.marked_at,
         }
 
@@ -275,6 +292,7 @@ class TrialVerdict:
             TrialVerdict: The mark.
         """
         judge = data.get("judge")
+        categorized_by = data.get("categorized_by")
         return cls(
             status=data["status"],
             reason=data.get("reason", ""),
@@ -282,6 +300,7 @@ class TrialVerdict:
             checks=tuple(CheckResult(**c) for c in data.get("checks", ())),
             judge=JudgeVerdict.from_dict(judge) if judge else None,
             category=data.get("category"),
+            categorized_by=JudgeVerdict.from_dict(categorized_by) if categorized_by else None,
             marked_at=data.get("marked_at", ""),
         )
 
@@ -297,11 +316,15 @@ def mark_trial(task: BenchmarkTask, folder: Path, judge: Judge | None) -> TrialV
     2. every machine check in the task file passes;
     3. if the task asks for the judge, the judge passes it.
 
-    Every failure is given a category where the judge can supply one. If the
-    judge already failed it, its category is used. If something else failed it
-    and a judge is configured, the judge is asked for the category alone; its
-    own pass or fail is recorded but does not change the mark, since the
-    machine checks are the stricter and cheaper authority where they apply.
+    Every failure must get exactly one category -- grounding, planning,
+    navigation, or site change. If the judge failed it, the judge's category
+    is used. If something else failed it (the agent did not finish, or a
+    machine check caught it), the judge is asked for the category alone, told
+    that the fail is already decided -- including when the judge itself had
+    said pass, since the machine checks are the stricter authority where they
+    apply. A fail that cannot be categorised yet (no judge, or the judge
+    could not answer) is kept as a fail with no category: an unfinished mark,
+    which a restart with a judge completes without running the trial again.
 
     Args:
         task: The task the run attempted.
@@ -350,11 +373,21 @@ def mark_trial(task: BenchmarkTask, folder: Path, judge: Judge | None) -> TrialV
         reason = judged.justification if judged is not None else "every check passed"
         return TrialVerdict(PASS, reason, agent_outcome, checks, judged)
 
-    # A failure. Find its category: from the judge's own fail, or by asking.
-    if judged is None and judge is not None:
-        judged = judge.judge(task, run)
-    category = judged.category if judged is not None and judged.outcome == FAIL else None
-    return TrialVerdict(FAIL, reason, agent_outcome, checks, judged, category)
+    # A failure. Its category comes from the judge's own fail, if it gave one.
+    if judged is not None and judged.outcome == FAIL:
+        return TrialVerdict(FAIL, reason, agent_outcome, checks, judged, judged.category)
+    if judge is None:
+        return TrialVerdict(
+            FAIL,
+            f"{reason} (no judge is configured to say what kind of failure it was)",
+            agent_outcome,
+            checks,
+            judged,
+        )
+    # Otherwise ask the judge which kind it was, telling it the fail is settled.
+    categorized = judge.categorize(task, run, reason)
+    category = categorized.category if categorized.outcome == FAIL else None
+    return TrialVerdict(FAIL, reason, agent_outcome, checks, judged, category, categorized)
 
 
 def write_verdict(folder: Path, verdict: TrialVerdict) -> None:
@@ -513,6 +546,13 @@ class SweepReport:
         if self.not_started:
             parts.append(f"{self.not_started} not started")
         tally = [f"{marks.count(PASS)} passed", f"{marks.count(FAIL)} failed"]
+        uncategorized = sum(
+            1
+            for r in self.results
+            if r.verdict is not None and r.verdict.status == FAIL and not r.verdict.complete
+        )
+        if uncategorized:
+            tally.append(f"{uncategorized} of the fails not yet categorised")
         for status, label in (
             (JUDGING_ERROR, "judging errors"),
             (NEEDS_JUDGE, "waiting for a judge"),
@@ -892,8 +932,10 @@ class Harness:
         except (TraceReadError, TraceError) as error:
             self._log(f"sweep: could not mark {trial.name}: {error}")
             return None
-        if verdict.judge is not None and verdict.judge.record is not None:
-            record_judge_call(self.folder, verdict.judge.record)
+        # Every judge call is paid for, and both kinds are counted.
+        for asked in (verdict.judge, verdict.categorized_by):
+            if asked is not None and asked.record is not None:
+                record_judge_call(self.folder, asked.record)
         write_verdict(folder, verdict)
         return verdict
 

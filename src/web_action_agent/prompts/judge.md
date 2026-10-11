@@ -80,3 +80,18 @@ A JSON object only, with no text around it:
   instead.
 - `category` — `none` for a pass; otherwise one of `grounding`, `planning`,
   `navigation`, `site_change`.
+
+## When the verdict is already decided
+
+Sometimes the case ends with **"Already decided: this run failed"**, and the
+reason. Then the run has been failed by other checks -- the agent ran out of
+steps, or a check of the answer or the page address caught a mistake -- and
+you are asked only *what kind* of failure it was. Do not decide pass or fail
+again, even if you would have passed it: the checks that failed it are
+stricter about the exact answer than you can be from a screenshot.
+
+Choose the category using the rules above, and answer with a JSON object only:
+
+- `category` — one of `grounding`, `planning`, `navigation`, `site_change`.
+- `justification` — one sentence on what in the steps or screenshots shows it.
+

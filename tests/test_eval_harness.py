@@ -428,7 +428,9 @@ def test_trial_state_is_read_from_the_folder(tmp_path: Path) -> None:
     (folder / VERDICT_FILE).write_text(json.dumps({"status": JUDGING_ERROR}))
     assert trial_state(folder) == UNMARKED, "a judging error is marked again later"
     (folder / VERDICT_FILE).write_text(json.dumps({"status": FAIL}))
-    assert trial_state(folder) == DONE, "a fail is a result, not unfinished work"
+    assert trial_state(folder) == UNMARKED, "a fail with no category is not finished"
+    (folder / VERDICT_FILE).write_text(json.dumps({"status": FAIL, "category": "planning"}))
+    assert trial_state(folder) == DONE, "a categorised fail is a result, not unfinished work"
 
 
 @pytest.mark.unit
@@ -691,6 +693,11 @@ class FakeJudge:
         self.asked += 1
         return self._verdict
 
+    def categorize(self, task: Any, run: Any, reason: str) -> JudgeVerdict:
+        """Return the fixed verdict, as the answer to "which kind of failure"."""
+        self.asked += 1
+        return self._verdict
+
 
 def judged_task() -> Any:
     """A stand-in task that also asks for the judge."""
@@ -751,6 +758,8 @@ def test_a_failure_found_by_the_checks_gets_its_category_from_the_judge(tmp_path
     verdict = mark_trial(stand_in_suite().tasks[0], tmp_path / "r", judge)  # type: ignore[arg-type]
     assert verdict.status == FAIL
     assert verdict.category == "navigation"
+    assert verdict.categorized_by is not None, "asked for the category alone"
+    assert verdict.complete
 
 
 @pytest.mark.unit

@@ -691,14 +691,15 @@ def eval_command(
         try:
             written = write_results(sweeps, RESULTS_ROOT)
         except MetricsError as error:
-            typer.echo(f"waa: could not write the results tables: {error}", err=True)
+            # Loud on purpose: a table with a blank where a failure's kind
+            # should be is worse than no table, because nobody chases a blank.
+            typer.echo(f"waa: the results tables were not written: {error}", err=True)
+            raise typer.Exit(EXIT_TASK_FAILURE) from error
         else:
             typer.echo(f"tables: {', '.join(str(p) for p in written)}")
     if report.stopped_by:
         typer.echo(f"stopped early: {report.stopped_by}")
-    unmarked = [
-        r for r in report.results if r.verdict is None or r.verdict.status not in ("pass", "fail")
-    ]
+    unmarked = [r for r in report.results if r.verdict is None or not r.verdict.complete]
     unfinished = unmarked or report.not_started
     raise typer.Exit(EXIT_TASK_FAILURE if unfinished else EXIT_SUCCESS)
 

@@ -224,24 +224,7 @@ def test_failures_are_counted_by_kind(tmp_path: Path) -> None:
     [table, _] = write_results([make_sweep(tmp_path / "runs")], tmp_path / "results")
     kinds = table.read_text().split("## Failures by kind")[1].split("## Every verdict")[0]
     # Three fails: one grounding, one planning, one navigation.
-    assert "| 1 | 1 | 1 | 0 | 0 |" in kinds
-
-
-def test_a_failure_with_no_category_is_shown_not_hidden(tmp_path: Path) -> None:
-    # A fail the judge could not categorise must be visible in the counts and
-    # in its own row, not quietly dropped from the "by kind" table.
-    sweep = make_sweep(tmp_path / "runs")
-    verdict = sweep / "charlie" / "trial-1" / VERDICT_FILE
-    data = json.loads(verdict.read_text())
-    data["category"] = None
-    verdict.write_text(json.dumps(data))
-
-    [table, _] = write_results([sweep], tmp_path / "results")
-
-    text = table.read_text()
-    kinds = text.split("## Failures by kind")[1].split("## Every verdict")[0]
-    assert "| 1 | 0 | 1 | 0 | 1 |" in kinds  # grounding, -, navigation, -, uncategorized
-    assert "| charlie | 1 | fail | uncategorized |" in text
+    assert "| 1 | 1 | 1 | 0 |" in kinds
 
 
 def test_the_per_task_table_shows_passes_out_of_marked(tmp_path: Path) -> None:
