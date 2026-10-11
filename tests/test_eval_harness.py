@@ -777,7 +777,13 @@ def test_waa_eval_runs_the_harness_and_names_the_sweep_folder(
             seen.update(folder=folder, suite=suite.name, **kwargs)
 
         def run(self) -> Any:
-            return SimpleNamespace(results=(), summary=lambda: "0 trials", folder=seen["folder"])
+            return SimpleNamespace(
+                results=(),
+                summary=lambda: "0 trials",
+                folder=seen["folder"],
+                stopped_by="",
+                not_started=0,
+            )
 
     monkeypatch.setattr(cli, "Harness", Recording)
     monkeypatch.setattr(cli, "resolve_env", dict)

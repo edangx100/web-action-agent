@@ -47,6 +47,7 @@ from web_action_agent.agent_run import RunSetupError, run_agent
 from web_action_agent.allowlist import Allowlist
 from web_action_agent.benchmark import BenchmarkError, load_suite
 from web_action_agent.browser import BrowserProcess, BrowserSettings
+from web_action_agent.budget import unpriced_routes
 from web_action_agent.capabilities import report_capabilities
 from web_action_agent.config import Config, ConfigError, flag_for, load_config, resolve_env
 from web_action_agent.controller import RunReport
@@ -54,7 +55,12 @@ from web_action_agent.eval_harness import Harness, HarnessError, default_sweep_d
 from web_action_agent.executor import Executor
 from web_action_agent.inducer import Inducer, InductionError
 from web_action_agent.judge import Judge, independence_problem
-from web_action_agent.model_client import ModelClient, ModelClientError, ProfileError
+from web_action_agent.model_client import (
+    ModelClient,
+    ModelClientError,
+    ProfileError,
+    resolve_profile,
+)
 from web_action_agent.reporting import TerminalTrace
 from web_action_agent.skill_schema import Skill
 from web_action_agent.skill_store import SkillStore, SkillStoreError
@@ -576,6 +582,18 @@ def eval_command(
             help="Sweep folder. Default runs/eval-<profile>-<cold|warm>; rerun to resume.",
         ),
     ] = None,
+    budget_usd: Annotated[
+        float | None,
+        typer.Option(
+            "--budget-usd", min=0.0, help="Money ceiling for the sweep, in dollars. Default $15."
+        ),
+    ] = None,
+    budget_hours: Annotated[
+        float | None,
+        typer.Option(
+            "--budget-hours", min=0.0, help="Time ceiling for the sweep, in hours. Default 6."
+        ),
+    ] = None,
     profile: ProfileOption = None,
     headed: HeadedOption = None,
 ) -> None:
@@ -597,6 +615,9 @@ def eval_command(
             number.
         out: The sweep's folder, or None for the default, which is named
             after what the sweep measures so that a rerun finds it.
+        budget_usd: The money ceiling, or None for the configured one. Once
+            the sweep has spent this much, no new trial starts.
+        budget_hours: The time ceiling, or None for the configured one.
         profile: Endpoint profile for the sweep. This is the only thing that
             changes between arms of the multi-model comparison.
         headed: True to show the browser windows, False to hide them, None
@@ -606,10 +627,13 @@ def eval_command(
         typer.Exit: :data:`EXIT_SUCCESS` when every trial has a mark (pass or
             fail -- a failed task is a result, not an error),
             :data:`EXIT_TASK_FAILURE` when some trial was left without one
-            and a rerun is needed, and :data:`EXIT_USAGE` when the sweep could
-            not start at all.
+            and a rerun is needed -- including when a ceiling stopped the
+            sweep early -- and :data:`EXIT_USAGE` when the sweep could not
+            start at all.
     """
-    config = _startup(profile=profile, headed=headed)
+    config = _startup(
+        profile=profile, headed=headed, budget_usd=budget_usd, budget_hours=budget_hours
+    )
     try:
         loaded = load_suite(suite)
         judge = Judge.from_config(config) if config.judge_profile else None
@@ -621,6 +645,20 @@ def eval_command(
             "waa: no judge configured: tasks marked by the judge will wait for one",
             err=True,
         )
+
+    # Said before anything is spent: a model with no price is a model whose
+    # calls the money ceiling cannot count.
+    profiles = [resolve_profile(config)] + ([judge.client.profile] if judge else [])
+    for route in unpriced_routes(profiles):
+        typer.echo(
+            f"waa: warning: {route} has no price in pricing.yaml, so the money ceiling "
+            "cannot count its calls (the time ceiling still applies)",
+            err=True,
+        )
+    typer.echo(
+        f"budget: ${config.budget_usd:.2f} and {config.budget_hours:g} hours for this sweep",
+        err=True,
+    )
 
     harness = Harness(
         config,
@@ -641,10 +679,13 @@ def eval_command(
 
     typer.echo(report.summary())
     typer.echo(f"results: {report.folder}")
+    if report.stopped_by:
+        typer.echo(f"stopped early: {report.stopped_by}")
     unmarked = [
         r for r in report.results if r.verdict is None or r.verdict.status not in ("pass", "fail")
     ]
-    raise typer.Exit(EXIT_TASK_FAILURE if unmarked else EXIT_SUCCESS)
+    unfinished = unmarked or report.not_started
+    raise typer.Exit(EXIT_TASK_FAILURE if unfinished else EXIT_SUCCESS)
 
 
 @app.command(

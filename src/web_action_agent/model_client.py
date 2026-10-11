@@ -981,7 +981,10 @@ class ModelClient:
         self.profile = profile
         self.timeout_s = timeout_s
         self.backoff = backoff or Backoff()
-        self.prices = prices or shipped_prices()
+        # "is not None", not "or": an empty table is a real choice -- price
+        # nothing -- and "or" would treat it as missing and swap in the
+        # shipped one, because an empty table counts as false.
+        self.prices = prices if prices is not None else shipped_prices()
         self._sleep = sleep
         self._spread = spread
         # Screenshots discarded by observation_message for want of a vision

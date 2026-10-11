@@ -58,6 +58,11 @@ offered, and the real library is never touched by a benchmark.
 machine checks from :mod:`~web_action_agent.checkers`, then the judge from
 :mod:`~web_action_agent.judge` where the task needs one. The result goes in
 ``verdict.json`` beside the run. See :func:`mark_trial` for how they combine.
+
+**Within budget.** Before each trial is handed out, the sweep's money and time
+ceilings are checked (see :mod:`~web_action_agent.budget`). Once either is
+reached, no new trial starts; the ones in progress finish and are marked, and
+the sweep stops in the same restartable state as after a Ctrl-C.
 """
 
 from __future__ import annotations
@@ -76,6 +81,7 @@ from .agent_run import RunSetupError, run_agent
 from .benchmark import BenchmarkTask, Suite
 from .benchmark import Judge as JudgeMethod
 from .browser import BrowserProcess, BrowserSettings
+from .budget import Budget, record_judge_call
 from .checkers import CheckResult, final_state, run_checks
 from .config import Config
 from .judge import FAIL, JUDGING_ERROR, PASS, Judge, JudgeVerdict
@@ -463,13 +469,20 @@ class SweepReport:
 
     Attributes:
         folder: The sweep's folder.
-        results: One entry per trial in the plan, in plan order.
+        results: One entry per trial that was looked at, in plan order.
+            Trials never started -- because a ceiling was reached first --
+            have no entry.
         moved_aside: Folders of killed runs moved to ``_interrupted/``.
+        not_started: Trials left for a later run, because the sweep stopped
+            before reaching them.
+        stopped_by: Why the sweep stopped early, or empty if it did not.
     """
 
     folder: Path
     results: tuple[TrialResult, ...]
     moved_aside: tuple[Path, ...] = ()
+    not_started: int = 0
+    stopped_by: str = ""
 
     def count(self, action: str) -> int:
         """Count the trials that had one thing happen to them.
@@ -497,6 +510,8 @@ class SweepReport:
         ):
             if self.count(action):
                 parts.append(f"{self.count(action)} {label}")
+        if self.not_started:
+            parts.append(f"{self.not_started} not started")
         tally = [f"{marks.count(PASS)} passed", f"{marks.count(FAIL)} failed"]
         for status, label in (
             (JUDGING_ERROR, "judging errors"),
@@ -544,6 +559,7 @@ class Harness:
         client_factory: Callable[[Config], ModelClient] | None = None,
         browser_factory: Callable[[Config], AbstractContextManager[Any]] | None = None,
         runner: TrialRunner | None = None,
+        budget: Budget | None = None,
         log: Callable[[str], None] = print,
     ) -> None:
         """Set up a sweep, without starting anything.
@@ -563,6 +579,8 @@ class Harness:
                 browser process per worker.
             runner: Runs one trial. Defaults to :meth:`run_one`, the real
                 agent.
+            budget: The money and time ceilings. Defaults to the ones in
+                ``config``.
             log: Where progress lines go.
         """
         self.config = config
@@ -578,6 +596,7 @@ class Harness:
             lambda cfg: BrowserProcess(BrowserSettings.from_config(cfg))
         )
         self._runner = runner or self.run_one
+        self._budget = budget or Budget.from_config(folder, config)
         self._log = log
 
         # Shared between worker threads, always read and written under this
@@ -587,6 +606,7 @@ class Harness:
         self._running_tasks: set[str] = set()
         self._stop = threading.Event()
         self._results: dict[str, TrialResult] = {}
+        self._stopped_by = ""
 
     # --- Preparing ---
 
@@ -665,8 +685,10 @@ class Harness:
             HarnessError: If the sweep cannot start. Nothing has run.
         """
         self.prepare()
+        self._budget.start()
         plan = plan_trials(self.suite, self.trials)
         moved: list[Path] = []
+        to_mark: list[Trial] = []
         to_run: list[Trial] = []
 
         for trial in plan:
@@ -675,23 +697,34 @@ class Harness:
             if state == DONE:
                 self._results[trial.name] = TrialResult(trial, SKIPPED, _read_verdict(folder))
             elif state == UNMARKED:
-                verdict = self._mark(trial, folder)
-                self._results[trial.name] = TrialResult(trial, REMARKED, verdict)
+                to_mark.append(trial)
             elif state == INTERRUPTED:
                 moved.append(self._move_aside(trial, folder))
                 to_run.append(trial)
             else:
                 to_run.append(trial)
 
-        done = len(plan) - len(to_run)
-        self._log(f"sweep: {len(plan)} trials, {done} already done, {len(to_run)} to run")
+        done = len(plan) - len(to_run) - len(to_mark)
+        self._log(
+            f"sweep: {len(plan)} trials, {done} already done, {len(to_run)} to run"
+            + (f", {len(to_mark)} to mark" if to_mark else "")
+        )
         if moved:
             self._log(f"sweep: {len(moved)} interrupted run(s) moved to {INTERRUPTED_DIR}/")
+        self._log(f"sweep: spent so far {self._budget.spend().summary()}")
 
-        self._pending = list(to_run)
+        # Marking may call the judge, which costs money too, so it waits on
+        # the same ceilings as running.
+        for trial in to_mark:
+            if self._over_budget():
+                break
+            verdict = self._mark(trial, trial.folder(self.folder))
+            self._results[trial.name] = TrialResult(trial, REMARKED, verdict)
+
+        self._pending = [] if self._stopped_by else list(to_run)
         threads = [
             threading.Thread(target=self._work, name=f"worker-{n + 1}", daemon=True)
-            for n in range(min(self.workers, len(to_run)))
+            for n in range(min(self.workers, len(self._pending)))
         ]
         for thread in threads:
             thread.start()
@@ -712,9 +745,34 @@ class Harness:
                 while thread.is_alive():
                     thread.join(timeout=0.2)
             raise
+        finally:
+            self._budget.save()
 
         results = tuple(self._results[t.name] for t in plan if t.name in self._results)
-        return SweepReport(self.folder, results, tuple(moved))
+        self._log(f"sweep: spent in total {self._budget.spend().summary()}")
+        return SweepReport(
+            self.folder,
+            results,
+            tuple(moved),
+            not_started=len(plan) - len(results),
+            stopped_by=self._stopped_by,
+        )
+
+    def _over_budget(self) -> bool:
+        """Check the ceilings, and stop the sweep the first time one is reached.
+
+        Returns:
+            bool: True if no more work may start.
+        """
+        if self._stopped_by:
+            return True
+        reason = self._budget.check()
+        if reason is None:
+            return False
+        self._stopped_by = reason
+        self._stop.set()
+        self._log(f"sweep: stopping: {reason}")
+        return True
 
     def _work(self) -> None:
         """One worker: start a browser, then run trials until none are left."""
@@ -726,6 +784,9 @@ class Harness:
                     self._release(trial)
                 with self._condition:
                     self._results[trial.name] = result
+                    # Saved after every trial, so a sweep killed without
+                    # warning loses at most one trial's time from its total.
+                    self._budget.save()
                 mark = result.verdict.status if result.verdict else result.action
                 self._log(f"{threading.current_thread().name}: {trial.name} -> {mark}")
 
@@ -739,7 +800,7 @@ class Harness:
         """
         with self._condition:
             while True:
-                if self._stop.is_set() or not self._pending:
+                if self._stop.is_set() or not self._pending or self._over_budget():
                     return None
                 for index, trial in enumerate(self._pending):
                     if trial.task.id not in self._running_tasks:
@@ -829,6 +890,8 @@ class Harness:
         except (TraceReadError, TraceError) as error:
             self._log(f"sweep: could not mark {trial.name}: {error}")
             return None
+        if verdict.judge is not None and verdict.judge.record is not None:
+            record_judge_call(self.folder, verdict.judge.record)
         write_verdict(folder, verdict)
         return verdict
 
