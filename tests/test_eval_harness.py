@@ -640,11 +640,14 @@ def test_killing_the_harness_and_restarting_does_exactly_the_remaining_trials(
     deadline = time.time() + 30
     while time.time() < deadline:
         lines = log.read_text().splitlines() if log.exists() else []
-        if sum(line.startswith("done") for line in lines) >= 3 and any(
-            line.startswith("start") and f"done {line[6:]}" not in lines for line in lines
-        ):
+        # Kill when at least three trials are done AND the newest line is a
+        # trial starting: that run has its whole 0.4 seconds still to go, so
+        # it is certainly caught half way. ("Some run has not finished yet" is
+        # not enough: the two workers run in step, and the other one may be
+        # milliseconds from done.)
+        if sum(line.startswith("done") for line in lines) >= 3 and lines[-1].startswith("start"):
             break
-        time.sleep(0.02)
+        time.sleep(0.005)
     os.kill(child.pid, signal.SIGKILL)
     child.wait()
 
