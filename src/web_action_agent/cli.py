@@ -51,10 +51,11 @@ from web_action_agent.budget import unpriced_routes
 from web_action_agent.capabilities import report_capabilities
 from web_action_agent.config import Config, ConfigError, flag_for, load_config, resolve_env
 from web_action_agent.controller import RunReport
-from web_action_agent.eval_harness import Harness, HarnessError, default_sweep_dir
+from web_action_agent.eval_harness import SWEEP_FILE, Harness, HarnessError, default_sweep_dir
 from web_action_agent.executor import Executor
 from web_action_agent.inducer import Inducer, InductionError
 from web_action_agent.judge import Judge, independence_problem
+from web_action_agent.metrics import MetricsError, find_sweeps, write_results
 from web_action_agent.model_client import (
     ModelClient,
     ModelClientError,
@@ -97,6 +98,10 @@ DEFAULT_SUITE = Path("benchmarks/suite.yaml")
 #: Where finished runs are written, and therefore where the commands that read
 #: runs back look first.
 DEFAULT_RUNS_DIR = Path("runs")
+
+#: Where the results tables are written: one Markdown file per sweep, and a
+#: README comparing them. Committed, unlike the run folders they summarise.
+RESULTS_ROOT = Path("results")
 
 #: How many times the benchmark repeats each task when ``--trials`` is not
 #: given. More trials narrow the error bars and cost proportionally more.
@@ -678,7 +683,17 @@ def eval_command(
         raise typer.Exit(EXIT_USAGE) from error
 
     typer.echo(report.summary())
-    typer.echo(f"results: {report.folder}")
+    typer.echo(f"runs: {report.folder}")
+    # The tables are rewritten after every sweep -- this one and every other
+    # sweep found beside it -- so the comparison is never out of date.
+    if (report.folder / SWEEP_FILE).exists():
+        sweeps = sorted({*find_sweeps(RUNS_ROOT), report.folder})
+        try:
+            written = write_results(sweeps, RESULTS_ROOT)
+        except MetricsError as error:
+            typer.echo(f"waa: could not write the results tables: {error}", err=True)
+        else:
+            typer.echo(f"tables: {', '.join(str(p) for p in written)}")
     if report.stopped_by:
         typer.echo(f"stopped early: {report.stopped_by}")
     unmarked = [
