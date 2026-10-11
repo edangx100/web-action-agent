@@ -484,7 +484,13 @@ def sweep_table(results: SweepResults, results_dir: Path, labels: dict[str, bool
         ),
         (
             "| Cost of judging (not the agent) | "
-            f"{render_cost(results.judge_cost_usd, 0)} over {results.judge_calls} calls |"
+            + (
+                f"{render_cost(results.judge_cost_usd, 0)} over {results.judge_calls} calls"
+                if results.judge_calls
+                # "$0.0000" would read as a measured cost of nothing.
+                else "none: no judge calls"
+            )
+            + " |"
         ),
         "| Judge–human agreement | "
         + (

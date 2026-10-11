@@ -305,6 +305,11 @@ def test_the_judges_cost_is_shown_apart_from_the_agents(tmp_path: Path) -> None:
     assert "| Cost of judging (not the agent) | $0.0300 over 3 calls |" in table.read_text()
 
 
+def test_a_sweep_with_no_judge_calls_says_so_rather_than_zero(tmp_path: Path) -> None:
+    [table, _] = write_results([make_sweep(tmp_path / "runs")], tmp_path / "results")
+    assert "| Cost of judging (not the agent) | none: no judge calls |" in table.read_text()
+
+
 def test_find_sweeps_finds_only_folders_with_a_sweep_file(tmp_path: Path) -> None:
     make_sweep(tmp_path, "eval-a")
     (tmp_path / "2026-10-12T01-00-00Z").mkdir()  # an ordinary `waa run` folder
