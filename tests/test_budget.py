@@ -140,6 +140,7 @@ def test_a_one_cent_ceiling_stops_after_the_run_that_crosses_it(tmp_path: Path) 
     assert report.count(RAN) == 2
     assert report.not_started == 3
     assert "money ceiling of $0.01" in report.stopped_by
+    assert report.summary().startswith("5 trials: 2 ran, 0 already done, 3 not started")
     assert sweep_spend(sweep).known_usd == pytest.approx(2 * COST_PER_CALL)
 
 

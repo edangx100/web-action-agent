@@ -519,7 +519,9 @@ class SweepReport:
         ):
             if marks.count(status):
                 tally.append(f"{marks.count(status)} {label}")
-        return f"{len(self.results)} trials: {', '.join(parts)}; {', '.join(tally)}"
+        # Every trial in the plan, including the ones never started.
+        total = len(self.results) + self.not_started
+        return f"{total} trials: {', '.join(parts)}; {', '.join(tally)}"
 
 
 class TrialRunner(Protocol):
