@@ -88,6 +88,7 @@ waa run "Search Hacker News for 'Rust async' and open the top result"
 | `waa induce <run-folder>` | Distill successful traces into candidate skills |
 | `waa skills list \| show \| retire` | Inspect and curate the skill library |
 | `waa judge <runs-dir>` | Produce verdicts and the agreement report |
+| `waa judge --review [runs-dir]` | Check the machine's marks by hand, one run at a time; resumable |
 
 Add `--help` to any of them for its flags. Every run starts from an explicit
 URL — `--start-url`, or the `start_url` default — because the agent never

@@ -55,7 +55,7 @@ from web_action_agent.eval_harness import SWEEP_FILE, Harness, HarnessError, def
 from web_action_agent.executor import Executor
 from web_action_agent.inducer import Inducer, InductionError
 from web_action_agent.judge import Judge, independence_problem
-from web_action_agent.metrics import MetricsError, find_sweeps, write_results
+from web_action_agent.metrics import HUMAN_LABELS_FILE, MetricsError, find_sweeps, write_results
 from web_action_agent.model_client import (
     ModelClient,
     ModelClientError,
@@ -63,6 +63,8 @@ from web_action_agent.model_client import (
     resolve_profile,
 )
 from web_action_agent.reporting import TerminalTrace
+from web_action_agent.review import DEFAULT_TARGET, ReviewError
+from web_action_agent.review import review as review_trials
 from web_action_agent.skill_schema import Skill
 from web_action_agent.skill_store import SkillStore, SkillStoreError
 from web_action_agent.trace import TraceError
@@ -883,15 +885,99 @@ def judge(
         bool,
         typer.Option("--review", help="Review the machine grades yourself, one run at a time."),
     ] = False,
+    target: Annotated[
+        int,
+        typer.Option(
+            "--target", min=1, help="With --review: stop once this many runs have your label."
+        ),
+    ] = DEFAULT_TARGET,
+    labels: Annotated[
+        Path | None,
+        typer.Option(
+            "--labels",
+            help="With --review: the file your labels go in. Default results/human_labels.jsonl.",
+        ),
+    ] = None,
+    suite: Annotated[
+        Path,
+        typer.Option("--suite", help="With --review: the suite, to show what counts as success."),
+    ] = DEFAULT_SUITE,
 ) -> None:
     """Grade finished runs, or check the grades by hand.
 
     Args:
         runs_dir: Directory of finished runs.
         review: Review the machine grades by hand instead of producing them.
+        target: For a review, how many runs should end up with a label.
+        labels: For a review, the labels file, or None for the default.
+        suite: For a review, the benchmark suite the runs came from.
+
+    Raises:
+        typer.Exit: For a review, :data:`EXIT_SUCCESS` when the session ended
+            normally (quitting part-way is normal: it resumes next time),
+            :data:`EXIT_TASK_FAILURE` when there was nothing to label, and
+            :data:`EXIT_USAGE` when ``runs_dir`` holds no sweeps.
     """
-    _startup()
-    _not_built_yet("human review" if review else "the judge")
+    if not review:
+        _startup()
+        _not_built_yet("the judge")
+    _review(runs_dir, labels or RESULTS_ROOT / HUMAN_LABELS_FILE, suite, target)
+
+
+def _ask(question: str) -> str:
+    """Ask the person a question at the terminal.
+
+    Args:
+        question: The question, shown before the cursor.
+
+    Returns:
+        str: What they typed. ``"q"`` (quit) when the input runs out or they
+        press Ctrl-C, so either ends the session cleanly, keeping every label
+        already given.
+    """
+    try:
+        return input(question)
+    except (EOFError, KeyboardInterrupt):
+        typer.echo("")
+        return "q"
+
+
+def _review(runs_dir: Path, labels_path: Path, suite_path: Path, target: int) -> None:
+    """Run a review session at the terminal, and exit.
+
+    No settings or keys are read: reviewing calls no AI, so it works on a
+    machine with nothing configured.
+
+    Args:
+        runs_dir: A sweep folder, or a folder of them.
+        labels_path: Where the labels are kept.
+        suite_path: The benchmark suite manifest.
+        target: How many runs should end up with a label.
+
+    Raises:
+        typer.Exit: Always; see :func:`judge` for the codes.
+    """
+    # The suite only adds "what counts as success" to each screen. Without it
+    # the review still works, so a suite that cannot be read is a warning.
+    try:
+        loaded = load_suite(suite_path)
+    except BenchmarkError as error:
+        typer.echo(f"waa: warning: {error}: what counts as success will not be shown", err=True)
+        loaded = None
+    try:
+        summary = review_trials(
+            runs_dir, labels_path, ask=_ask, say=typer.echo, suite=loaded, target=target
+        )
+    except ReviewError as error:
+        typer.echo(f"waa: {error}", err=True)
+        raise typer.Exit(EXIT_USAGE) from error
+
+    typer.echo(summary.render())
+    typer.echo(f"labels: {labels_path}")
+    if summary.reviewable == 0:
+        typer.echo("waa: no trial has a finished mark yet, so there is nothing to check", err=True)
+        raise typer.Exit(EXIT_TASK_FAILURE)
+    raise typer.Exit(EXIT_SUCCESS)
 
 
 #: The subcommand names, taken from the commands actually registered above

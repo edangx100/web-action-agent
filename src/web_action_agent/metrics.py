@@ -377,7 +377,9 @@ def read_human_labels(path: Path) -> dict[str, bool]:
     Args:
         path: A ``human_labels.jsonl`` file. Each line is an object with
             ``run``, the trial folder's path, and ``passed``, the human's
-            verdict. Later lines for the same run replace earlier ones.
+            verdict. A relative ``run`` is relative to the file's own folder,
+            so it means the same thing whatever folder this is called from.
+            Later lines for the same run replace earlier ones.
 
     Returns:
         dict[str, bool]: The human's verdict for each trial folder, keyed by
@@ -389,7 +391,9 @@ def read_human_labels(path: Path) -> dict[str, bool]:
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
             record = json.loads(line)
-            labels[str(Path(record["run"]).resolve())] = bool(record["passed"])
+            # Joining an absolute path leaves it unchanged, so both kinds work.
+            run = (path.parent / record["run"]).resolve()
+            labels[str(run)] = bool(record["passed"])
         except (json.JSONDecodeError, KeyError, TypeError):
             continue
     return labels
