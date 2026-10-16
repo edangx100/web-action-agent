@@ -163,3 +163,8 @@ workers: 4
 # Ceilings for one evaluation sweep. Whichever is reached first stops the sweep.
 budget_usd: 15.0
 budget_hours: 6.0
+
+# Hand-labelled trials an agreement figure (machine marks vs a person's)
+# should rest on before it is relied on. Fewer are still reported in the
+# results tables, with how many there were and a warning.
+agreement_min_labels: 20

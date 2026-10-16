@@ -31,7 +31,7 @@ from web_action_agent.checkers import CheckResult
 from web_action_agent.cli import EXIT_SUCCESS, EXIT_TASK_FAILURE, EXIT_USAGE, app
 from web_action_agent.eval_harness import SWEEP_FILE, VERDICT_FILE, TrialVerdict
 from web_action_agent.judge import FAIL, FAILURE_CATEGORIES, JUDGING_ERROR, PASS, JudgeVerdict
-from web_action_agent.metrics import read_human_labels, write_results
+from web_action_agent.metrics import HumanVerdict, read_human_labels, write_results
 from web_action_agent.review import (
     CATEGORY_ANSWERS,
     QUIT,
@@ -223,6 +223,7 @@ def test_three_runs_give_three_well_formed_records(in_tmp: Path) -> None:
     result = invoke(in_tmp, typed)
 
     assert result.exit_code == EXIT_SUCCESS
+    assert "updated the next time `waa eval` writes the tables" in result.output
     records = labels_in(in_tmp)
     assert len(records) == 3
     by_task = {r["task_id"]: r for r in records}
@@ -257,7 +258,7 @@ def test_the_results_tables_read_the_labels_from_any_folder(
 
     labels = read_human_labels(in_tmp / "results" / "human_labels.jsonl")
 
-    assert labels == {str((sweep / t / "trial-1").resolve()): True for t in MARKS}
+    assert labels == {str((sweep / t / "trial-1").resolve()): HumanVerdict(True) for t in MARKS}
 
 
 def test_the_labels_reach_the_agreement_line_of_the_table(in_tmp: Path) -> None:
@@ -267,7 +268,7 @@ def test_the_labels_reach_the_agreement_line_of_the_table(in_tmp: Path) -> None:
 
     [table, _] = write_results([sweep], in_tmp / "results")
 
-    assert "| Judge–human agreement | 33.3% (1 of 3 labelled trials) |" in table.read_text()
+    assert "| Judge–human agreement: pass or fail | 33.3% (1 of 3 trials)" in table.read_text()
 
 
 def test_the_screen_shows_what_a_person_needs_to_decide(in_tmp: Path) -> None:
@@ -485,7 +486,7 @@ def test_a_line_cut_off_by_a_crash_does_not_swallow_the_next_label(in_tmp: Path)
     item = find_reviewable(sweep)[0]
     append_label(path, HumanLabel.for_item(item, True, None, path.parent))
 
-    assert read_human_labels(path) == {str(item.folder.resolve()): True}
+    assert read_human_labels(path) == {str(item.folder.resolve()): HumanVerdict(True)}
 
 
 def test_a_pass_never_carries_a_kind(in_tmp: Path) -> None:

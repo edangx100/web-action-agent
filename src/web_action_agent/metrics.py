@@ -41,6 +41,14 @@ runs before anything is written, and stops with a list of every such failure
 and how to fix it. A pass that carries a category is stopped the same way:
 it means the mark was made inconsistently.
 
+**Checked by a person.** Some trials are labelled by hand (see
+:mod:`~web_action_agent.review`), and the tables say how often the machine's
+marks matched: on pass or fail, and on the kind of failure. Each is given as a
+plain percentage and as Cohen's kappa, which discounts agreement by luck (see
+:mod:`~web_action_agent.agreement`). Each sweep's table shows its own share
+of the labels; the comparison shows every sweep's together, which is the
+figure that rests on all of them.
+
 **Only marked trials count.** A trial with no pass or fail yet -- a judging
 error, or waiting for a judge -- is left out of the rates and counted on its
 own line, so it can neither help nor hurt the score without anyone noticing.
@@ -56,6 +64,7 @@ from os.path import relpath
 from pathlib import Path
 from typing import Any
 
+from .agreement import DEFAULT_MIN_LABELS, Agreement, measure
 from .budget import JUDGE_LOG, read_calls
 from .eval_harness import SWEEP_FILE, VERDICT_FILE
 from .judge import FAIL, FAILURE_CATEGORIES, PASS
@@ -371,53 +380,144 @@ def load_sweep(folder: Path) -> SweepResults:
 # --- Agreement with humans ----------------------------------------------------------
 
 
-def read_human_labels(path: Path) -> dict[str, bool]:
+@dataclass(frozen=True)
+class HumanVerdict:
+    """A person's verdict on one trial, as read from the labels file.
+
+    Attributes:
+        passed: Pass (True) or fail (False).
+        category: For a fail, the person's kind of failure. None for a pass,
+            or when the line does not say.
+    """
+
+    passed: bool
+    category: str | None = None
+
+
+def read_human_labels(path: Path) -> dict[str, HumanVerdict]:
     """Read human verdicts, keyed by trial folder.
 
     Args:
         path: A ``human_labels.jsonl`` file. Each line is an object with
-            ``run``, the trial folder's path, and ``passed``, the human's
-            verdict. A relative ``run`` is relative to the file's own folder,
+            ``run``, the trial folder's path, ``passed``, the human's
+            verdict, and for a fail ``category``, the human's kind of
+            failure. A relative ``run`` is relative to the file's own folder,
             so it means the same thing whatever folder this is called from.
             Later lines for the same run replace earlier ones.
 
     Returns:
-        dict[str, bool]: The human's verdict for each trial folder, keyed by
-        its resolved path. Empty if there is no file yet.
+        dict[str, HumanVerdict]: The human's verdict for each trial folder,
+        keyed by its resolved path. Empty if there is no file yet. Lines that
+        cannot be read -- such as half a line left by a crash -- are skipped.
     """
-    labels: dict[str, bool] = {}
+    labels: dict[str, HumanVerdict] = {}
     if not path.exists():
         return labels
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
             record = json.loads(line)
+            passed = record["passed"]
             # Joining an absolute path leaves it unchanged, so both kinds work.
             run = (path.parent / record["run"]).resolve()
-            labels[str(run)] = bool(record["passed"])
         except (json.JSONDecodeError, KeyError, TypeError):
             continue
+        # Only a real true or false counts: the text "false" is not a verdict.
+        if not isinstance(passed, bool):
+            continue
+        category = None if passed else record.get("category")
+        labels[str(run)] = HumanVerdict(passed, category)
     return labels
 
 
-def raw_agreement(rows: Iterable[TrialRow], labels: dict[str, bool]) -> tuple[int, int]:
-    """Count how often the recorded verdict and a human agreed.
+def label_pairs(
+    rows: Iterable[TrialRow], labels: dict[str, HumanVerdict]
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Pair the machine's marks with the human's, trial by trial.
 
     Args:
         rows: Trials.
         labels: Human verdicts, from :func:`read_human_labels`.
 
     Returns:
-        tuple[int, int]: Agreements, and trials a human labelled. Only marked
-        trials count: there is nothing to agree with on an unfinished one.
+        tuple: Two lists of (machine, human) pairs.
+
+        - **Verdicts:** ``pass`` or ``fail`` from each side, for every marked
+          trial a human labelled.
+        - **Kinds of failure:** the two kinds, for the trials *both* sides
+          called a fail. A kind only exists for a fail, so a trial one side
+          passed has no kind to compare; that disagreement is already counted
+          in the verdicts.
+
+        Unmarked trials are left out of both: there is nothing to agree with.
     """
-    agree = total = 0
+    verdicts: list[tuple[str, str]] = []
+    kinds: list[tuple[str, str]] = []
     for row in rows:
         human = labels.get(str(row.folder.resolve()))
         if human is None or not row.marked:
             continue
-        total += 1
-        agree += int(human == (row.status == PASS))
-    return agree, total
+        verdicts.append((row.status, PASS if human.passed else FAIL))
+        if row.status == FAIL and not human.passed and row.category and human.category:
+            kinds.append((row.category, human.category))
+    return verdicts, kinds
+
+
+def judge_human_agreement(
+    rows: Iterable[TrialRow],
+    labels: dict[str, HumanVerdict],
+    minimum: int = DEFAULT_MIN_LABELS,
+) -> tuple[Agreement, Agreement]:
+    """Measure how well the machine's marks and a person's agree.
+
+    Args:
+        rows: Trials.
+        labels: Human verdicts, from :func:`read_human_labels`.
+        minimum: The fewest labelled trials a figure should rest on.
+
+    Returns:
+        tuple[Agreement, Agreement]: Agreement on pass or fail, then on the
+        kind of failure (over the trials both called a fail).
+    """
+    verdicts, kinds = label_pairs(rows, labels)
+    return measure(verdicts, minimum), measure(kinds, minimum)
+
+
+def _agreement_rows(
+    rows: Iterable[TrialRow], labels: dict[str, HumanVerdict], minimum: int
+) -> list[str]:
+    """Write the two agreement rows of a two-column Markdown table.
+
+    Args:
+        rows: Trials.
+        labels: Human verdicts.
+        minimum: The fewest labelled trials a figure should rest on.
+
+    Returns:
+        list[str]: The pass-or-fail row, then the kind-of-failure row.
+    """
+    verdict, kind = judge_human_agreement(rows, labels, minimum)
+    return [
+        f"| Judge–human agreement: pass or fail | {verdict.render()} |",
+        (
+            "| Judge–human agreement: kind of failure (trials both called a fail) | "
+            # With labels but no trial both sides failed, there is no kind to
+            # compare yet -- which is different from having no labels at all.
+            + (
+                kind.render("no trial was called a fail by both sides yet")
+                if verdict.n
+                else verdict.render()
+            )
+            + " |"
+        ),
+    ]
+
+
+#: Said under every agreement figure, so a reader knows what kappa is.
+KAPPA_EXPLAINED = (
+    "Agreement is the share of hand-labelled trials where the machine's mark and "
+    "a person's matched. Cohen's κ discounts the agreement the two would reach by "
+    "chance alone: 1 is perfect, 0 is no better than chance."
+)
 
 
 # --- Every failure categorised -------------------------------------------------------
@@ -494,14 +594,21 @@ def _link(target: Path, from_dir: Path) -> str:
     return Path(relpath(target.resolve(), from_dir.resolve())).as_posix()
 
 
-def sweep_table(results: SweepResults, results_dir: Path, labels: dict[str, bool]) -> str:
+def sweep_table(
+    results: SweepResults,
+    results_dir: Path,
+    labels: dict[str, HumanVerdict],
+    minimum: int = DEFAULT_MIN_LABELS,
+) -> str:
     """Write the Markdown results for one sweep.
 
     Args:
         results: The sweep.
         results_dir: The folder the file will be written to, so that links to
             run folders can be made relative to it.
-        labels: Human verdicts, for the agreement line.
+        labels: Human verdicts, for the agreement lines.
+        minimum: The fewest labelled trials an agreement figure should rest
+            on before it is relied on.
 
     Returns:
         str: The whole Markdown document.
@@ -515,7 +622,6 @@ def sweep_table(results: SweepResults, results_dir: Path, labels: dict[str, bool
     rate = success_rate(results.rows)
     overall = averages(results.marked)
     unmarked = len(results.rows) - len(results.marked)
-    agree, labelled = raw_agreement(results.rows, labels)
     judge = spec.get("judge_profile") or "none"
 
     lines = [
@@ -557,13 +663,9 @@ def sweep_table(results: SweepResults, results_dir: Path, labels: dict[str, bool
             )
             + " |"
         ),
-        "| Judge–human agreement | "
-        + (
-            f"{agree / labelled:.1%} ({agree} of {labelled} labelled trials)"
-            if labelled
-            else "not yet measured (no human labels)"
-        )
-        + " |",
+        *_agreement_rows(results.rows, labels, minimum),
+        "",
+        KAPPA_EXPLAINED,
         "",
         "## Per task",
         "",
@@ -607,15 +709,26 @@ def sweep_table(results: SweepResults, results_dir: Path, labels: dict[str, bool
     return "\n".join(lines) + "\n"
 
 
-def comparison_table(sweeps: Sequence[SweepResults], results_dir: Path) -> str:
+def comparison_table(
+    sweeps: Sequence[SweepResults],
+    results_dir: Path,
+    labels: dict[str, HumanVerdict] | None = None,
+    minimum: int = DEFAULT_MIN_LABELS,
+) -> str:
     """Write the Markdown table comparing every sweep.
 
     This is the table the cold-versus-warm and multi-model comparisons are
-    read from: one row per sweep, same measures in every column.
+    read from: one row per sweep, same measures in every column. Below it,
+    the judge–human agreement over every sweep together: the hand-labelled
+    trials are spread across the sweeps, so only the pooled figure rests on
+    all of them.
 
     Args:
         sweeps: The sweeps to compare.
         results_dir: The folder the file will be written to.
+        labels: Human verdicts, for the agreement section. None for none.
+        minimum: The fewest labelled trials an agreement figure should rest
+            on before it is relied on.
 
     Returns:
         str: The whole Markdown document.
@@ -647,6 +760,17 @@ def comparison_table(sweeps: Sequence[SweepResults], results_dir: Path) -> str:
             f"{render_cost(avg.cost_usd, avg.unpriced_calls)} | "
             f"{sweep.spec.get('started_at', '?')} |"
         )
+    every_row = [row for sweep in sweeps for row in sweep.rows]
+    lines += [
+        "",
+        "## Judge–human agreement",
+        "",
+        "Over every sweep above together. " + KAPPA_EXPLAINED,
+        "",
+        "| Measure | Value |",
+        "|---|---|",
+        *_agreement_rows(every_row, labels or {}, minimum),
+    ]
     return "\n".join(lines) + "\n"
 
 
@@ -662,12 +786,17 @@ def find_sweeps(runs_root: Path) -> list[Path]:
     return sorted(p.parent for p in runs_root.glob(f"*/{SWEEP_FILE}"))
 
 
-def write_results(sweep_dirs: Iterable[Path], results_dir: Path) -> list[Path]:
+def write_results(
+    sweep_dirs: Iterable[Path], results_dir: Path, *, min_labels: int = DEFAULT_MIN_LABELS
+) -> list[Path]:
     """Write the tables for some sweeps, and the comparison of them all.
 
     Args:
         sweep_dirs: The sweep folders.
         results_dir: Where the Markdown files go. Created if needed.
+        min_labels: The fewest hand-labelled trials an agreement figure
+            should rest on before it is relied on. Fewer are still shown,
+            with their count and a warning.
 
     Returns:
         list[Path]: The files written: one per sweep, then the comparison.
@@ -684,9 +813,11 @@ def write_results(sweep_dirs: Iterable[Path], results_dir: Path) -> list[Path]:
     written: list[Path] = []
     for sweep in sweeps:
         path = results_dir / f"{sweep.name}.md"
-        path.write_text(sweep_table(sweep, results_dir, labels), encoding="utf-8")
+        path.write_text(sweep_table(sweep, results_dir, labels, min_labels), encoding="utf-8")
         written.append(path)
     comparison = results_dir / COMPARISON_FILE
-    comparison.write_text(comparison_table(sweeps, results_dir), encoding="utf-8")
+    comparison.write_text(
+        comparison_table(sweeps, results_dir, labels, min_labels), encoding="utf-8"
+    )
     written.append(comparison)
     return written

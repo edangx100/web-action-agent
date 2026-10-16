@@ -691,7 +691,7 @@ def eval_command(
     if (report.folder / SWEEP_FILE).exists():
         sweeps = sorted({*find_sweeps(RUNS_ROOT), report.folder})
         try:
-            written = write_results(sweeps, RESULTS_ROOT)
+            written = write_results(sweeps, RESULTS_ROOT, min_labels=config.agreement_min_labels)
         except MetricsError as error:
             # Loud on purpose: a table with a blank where a failure's kind
             # should be is worse than no table, because nobody chases a blank.
@@ -974,6 +974,10 @@ def _review(runs_dir: Path, labels_path: Path, suite_path: Path, target: int) ->
 
     typer.echo(summary.render())
     typer.echo(f"labels: {labels_path}")
+    if summary.labelled_now:
+        # The review writes labels, not tables; the tables are rewritten by
+        # the eval command, which is the one that knows the settings.
+        typer.echo("agreement figures: updated the next time `waa eval` writes the tables")
     if summary.reviewable == 0:
         typer.echo("waa: no trial has a finished mark yet, so there is nothing to check", err=True)
         raise typer.Exit(EXIT_TASK_FAILURE)

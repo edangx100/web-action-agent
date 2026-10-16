@@ -327,6 +327,14 @@ class Config(BaseModel):
     budget_hours: float = Field(
         default=6.0, gt=0.0, description="Wall-clock ceiling for one evaluation sweep."
     )
+    agreement_min_labels: int = Field(
+        default=20,
+        gt=0,
+        description=(
+            "Hand-labelled trials a judge-human agreement figure should rest on. "
+            "Fewer are still reported, with their count and a warning."
+        ),
+    )
 
 
 def env_var_for(field: str) -> str:

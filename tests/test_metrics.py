@@ -38,8 +38,8 @@ from web_action_agent.metrics import (
     TrialRow,
     averages,
     find_sweeps,
+    judge_human_agreement,
     load_sweep,
-    raw_agreement,
     read_human_labels,
     render_cost,
     success_rate,
@@ -317,7 +317,8 @@ def test_agreement_is_counted_over_labelled_marked_trials(tmp_path: Path) -> Non
         )
     )
     rows = load_sweep(sweep).rows
-    assert raw_agreement(rows, read_human_labels(labels_file)) == (2, 3)
+    verdict, _ = judge_human_agreement(rows, read_human_labels(labels_file))
+    assert (verdict.agreed, verdict.n) == (2, 3)
 
 
 def test_agreement_is_shown_as_not_measured_until_there_are_labels(tmp_path: Path) -> None:
@@ -333,7 +334,10 @@ def test_agreement_appears_in_the_table_once_labelled(tmp_path: Path) -> None:
         json.dumps({"run": str(sweep / "alpha" / "trial-1"), "passed": True}) + "\n"
     )
     [table, _] = write_results([sweep], results)
-    assert "| Judge–human agreement | 100.0% (1 of 1 labelled trials) |" in table.read_text()
+    assert (
+        "| Judge–human agreement: pass or fail | 100.0% (1 of 1 trials) · Cohen's κ undefined"
+        in table.read_text()
+    )
 
 
 # --- The command -------------------------------------------------------------------
