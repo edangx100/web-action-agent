@@ -85,7 +85,7 @@ waa run "Search Hacker News for 'Rust async' and open the top result"
 |---|---|
 | `waa run "<task>"` | Run one task end to end |
 | `waa eval` | Run the benchmark suite with layered verdicts |
-| `waa induce <run-folder>` | Distill successful traces into candidate skills |
+| `waa induce <run-folder>` | Distill successful traces into candidate skills; `--all <sweep-folder>` learns from a benchmark sweep's passes |
 | `waa skills list \| show \| retire` | Inspect and curate the skill library |
 | `waa judge <runs-dir>` | Produce verdicts and the agreement report |
 | `waa judge --review [runs-dir]` | Check the machine's marks by hand, one run at a time; resumable |
@@ -94,6 +94,23 @@ Add `--help` to any of them for its flags. Every run starts from an explicit
 URL — `--start-url`, or the `start_url` default — because the agent never
 begins on a blank page and guesses. `--headed` shows the browser window; it is
 off by default so runs work over SSH and in CI.
+
+### The cold-vs-warm experiment
+
+Does learning skills make the agent better? `scripts/cold_vs_warm.sh` answers
+it on one model: the benchmark with an empty skill library, then learning from
+that pass's passing trials, then the benchmark again with what was learnt.
+
+```bash
+scripts/cold_vs_warm.sh --profile openrouter --trials 3
+```
+
+It spends real money and visits the benchmark's live sites; each pass has its
+own spending and time ceiling. Run it again to resume after a stop. The two
+passes are compared, with the change in success rate, steps, tokens, time and
+cost, in `results/cold_vs_warm.md`. A cold pass refuses to start on a library
+that holds skills, and a warm pass on one with none for the suite's sites, so
+neither arm can quietly be the other.
 
 ### Exit codes
 

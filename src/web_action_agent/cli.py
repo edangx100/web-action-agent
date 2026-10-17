@@ -51,7 +51,13 @@ from web_action_agent.budget import unpriced_routes
 from web_action_agent.capabilities import report_capabilities
 from web_action_agent.config import Config, ConfigError, flag_for, load_config, resolve_env
 from web_action_agent.controller import RunReport
-from web_action_agent.eval_harness import SWEEP_FILE, Harness, HarnessError, default_sweep_dir
+from web_action_agent.eval_harness import (
+    SWEEP_FILE,
+    Harness,
+    HarnessError,
+    default_sweep_dir,
+    passing_trials,
+)
 from web_action_agent.executor import Executor
 from web_action_agent.inducer import Inducer, InductionError
 from web_action_agent.judge import Judge, independence_problem
@@ -301,7 +307,9 @@ def _judge_for(config: Config) -> ModelClient | None:
         return None
 
 
-def _induce_from(config: Config, folders: list[Path]) -> int:
+def _induce_from(
+    config: Config, folders: list[Path], task_of: dict[Path, str] | None = None
+) -> int:
     """Learn a skill from each finished run, keeping only the ones that check out.
 
     The order is the point: induce, then *verify against a live page with
@@ -311,6 +319,10 @@ def _induce_from(config: Config, folders: list[Path]) -> int:
     Args:
         config: The run's resolved settings.
         folders: The run folders to learn from.
+        task_of: For runs from a benchmark sweep, each folder's task. Once a
+            task has a stored skill, its other trials are passed over: three
+            passing trials of one task would give three copies of one route,
+            each costing a model call and a live check.
 
     Returns:
         int: :data:`EXIT_SUCCESS` if at least one skill was stored, or if there
@@ -336,12 +348,18 @@ def _induce_from(config: Config, folders: list[Path]) -> int:
     inducer = Inducer(client)
     induced = verified = discarded = 0
 
+    learned: set[str] = set()
+    task_of = task_of or {}
     with BrowserProcess(BrowserSettings.from_config(config)) as browser:
         for folder in folders:
+            task = task_of.get(folder)
+            if task is not None and task in learned:
+                typer.echo(f"  {_name(folder)}: skipped, {task} already has a skill", err=True)
+                continue
             try:
                 run = read_run(folder)
             except TraceError as error:
-                typer.echo(f"  {folder.name}: not a run folder ({error})", err=True)
+                typer.echo(f"  {_name(folder)}: not a run folder ({error})", err=True)
                 continue
 
             try:
@@ -352,10 +370,12 @@ def _induce_from(config: Config, folders: list[Path]) -> int:
                 # Not an error in the ordinary sense: most run folders are not
                 # eligible, because most runs fail, and only successful ones
                 # may be learnt from.
-                typer.echo(f"  {folder.name}: nothing to learn ({error})", err=True)
+                typer.echo(f"  {_name(folder)}: nothing to learn ({error})", err=True)
                 continue
             except (ModelClientError, ValidationError) as error:
-                typer.echo(f"  {folder.name}: could not be turned into a skill ({error})", err=True)
+                typer.echo(
+                    f"  {_name(folder)}: could not be turned into a skill ({error})", err=True
+                )
                 continue
 
             induced += 1
@@ -365,17 +385,35 @@ def _induce_from(config: Config, folders: list[Path]) -> int:
             if verdict.passed:
                 library.save(candidate)
                 verified += 1
+                if task is not None:
+                    learned.add(task)
                 typer.echo(
-                    f"  {folder.name}: stored {candidate.name!r} - {verdict.reason}", err=True
+                    f"  {_name(folder)}: stored {candidate.name!r} - {verdict.reason}", err=True
                 )
             else:
                 discarded += 1
-                typer.echo(f"  {folder.name}: {verdict.summary()}", err=True)
+                typer.echo(f"  {_name(folder)}: {verdict.summary()}", err=True)
 
     typer.echo(f"{induced} induced, {verified} verified, {discarded} discarded", err=True)
     if verified:
         typer.echo(f"library: {SKILLS_ROOT}", err=True)
     return EXIT_TASK_FAILURE if induced and not verified else EXIT_SUCCESS
+
+
+def _name(folder: Path) -> str:
+    """Name a run folder in a progress line.
+
+    Args:
+        folder: A run folder.
+
+    Returns:
+        str: ``<task>/trial-<n>`` for a benchmark trial, whose own name alone
+        (``trial-1``) would not say which task it was; the folder's name
+        otherwise.
+    """
+    if folder.name.startswith("trial-"):
+        return f"{folder.parent.name}/{folder.name}"
+    return folder.name
 
 
 def _check(
@@ -746,11 +784,27 @@ def induce(
         raise typer.Exit(EXIT_USAGE)
 
     config = _startup()
-    folders = sorted(f for f in all_runs.iterdir() if f.is_dir()) if all_runs else [run_folder]
-    if all_runs is not None and not folders:
-        typer.echo(f"waa: {all_runs} holds no run folders", err=True)
-        raise typer.Exit(EXIT_USAGE)
-    raise typer.Exit(_induce_from(config, [f for f in folders if f is not None]))
+    task_of: dict[Path, str] = {}
+    if all_runs is not None and (all_runs / SWEEP_FILE).exists():
+        # A benchmark sweep keeps its runs two levels down, beside folders
+        # that are not runs. Learn only from the trials it marked a pass.
+        passing = passing_trials(all_runs)
+        task_of = dict(passing)
+        folders: list[Path | None] = [folder for folder, _ in passing]
+        typer.echo(
+            f"sweep: learning from the {len(passing)} trial(s) the benchmark marked a pass, "
+            "at most one skill per task",
+            err=True,
+        )
+        if not passing:
+            typer.echo(f"waa: {all_runs} has no passing trials to learn from", err=True)
+            raise typer.Exit(EXIT_TASK_FAILURE)
+    else:
+        folders = sorted(f for f in all_runs.iterdir() if f.is_dir()) if all_runs else [run_folder]
+        if all_runs is not None and not folders:
+            typer.echo(f"waa: {all_runs} holds no run folders", err=True)
+            raise typer.Exit(EXIT_USAGE)
+    raise typer.Exit(_induce_from(config, [f for f in folders if f is not None], task_of))
 
 
 @skills_app.command(

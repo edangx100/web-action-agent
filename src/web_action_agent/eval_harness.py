@@ -54,6 +54,14 @@ trial works on its *own* copy of that. A trial that replays a skill writes
 its tally into its own copy, so no trial can change what the next one is
 offered, and the real library is never touched by a benchmark.
 
+**The right library, or no sweep.** The cold-versus-warm comparison is only
+a comparison if the cold arm really had no skills and the warm arm really had
+some. Both are easy to get wrong by accident -- a sweep folder reused, or the
+learning step forgotten between the two passes -- and either would publish a
+difference that measures nothing. So :func:`library_problem` checks before a
+sweep starts: a cold sweep refuses a library with any skill in it, and a warm
+sweep refuses one with no active skill for any of the suite's websites.
+
 **Marking.** When a trial's run finishes, it is marked straight away: the
 machine checks from :mod:`~web_action_agent.checkers`, then the judge from
 :mod:`~web_action_agent.judge` where the task needs one. The result goes in
@@ -78,6 +86,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .agent_run import RunSetupError, run_agent
+from .allowlist import derive_domain, host_of
 from .benchmark import BenchmarkTask, Suite
 from .benchmark import Judge as JudgeMethod
 from .browser import BrowserProcess, BrowserSettings
@@ -86,7 +95,7 @@ from .checkers import CheckResult, final_state, run_checks
 from .config import Config
 from .judge import FAIL, FAILURE_CATEGORIES, JUDGING_ERROR, PASS, Judge, JudgeVerdict
 from .model_client import ModelClient, ModelClientError, resolve_profile
-from .skill_store import SkillStore
+from .skill_store import SkillStore, SkillStoreError
 from .trace import OUTCOME_FILE, TraceError
 from .trace_reader import TraceReadError, read_run
 
@@ -458,6 +467,67 @@ class SweepSpec:
         ]
 
 
+def suite_domains(suite: Suite) -> set[str]:
+    """List the websites a suite's tasks start on, as skills name them.
+
+    Args:
+        suite: The benchmark suite.
+
+    Returns:
+        set[str]: The registrable domain of each task's start page, such as
+        ``mom.gov.sg`` -- worked out exactly as skill retrieval does, so a
+        skill counts as matching here only if a trial would be offered it.
+    """
+    return {derive_domain(host_of(task.start_url)) for task in suite.tasks}
+
+
+def library_problem(library: Path, suite: Suite, *, cold: bool) -> str | None:
+    """Say what is wrong with the library a sweep is about to use, if anything.
+
+    Args:
+        library: The skill library the sweep would start from. It may not
+            exist, which counts as empty.
+        suite: The suite the sweep runs.
+        cold: True for a cold sweep, False for a warm one.
+
+    Returns:
+        str | None: None when the library suits the sweep. Otherwise one
+        sentence on what is wrong and what to do about it:
+
+        - a cold sweep whose library holds any skill at all, active or
+          retired -- the arm is meant to show the agent with nothing learnt;
+        - a warm sweep whose library has no active skill for any of the
+          suite's websites -- it would run exactly like a cold one, and the
+          difference published would be zero for the wrong reason.
+    """
+    store = SkillStore(library)
+    held = len(store) if library.is_dir() else 0
+    if cold:
+        if held:
+            return (
+                f"a cold sweep must start with an empty skill library, but {library} holds "
+                f"{held} skill(s). This folder looks like it was used for a warm sweep: use "
+                "another folder with --out, or remove this one"
+            )
+        return None
+
+    domains = suite_domains(suite)
+    try:
+        skills = store.load_all() if held else ()
+    except SkillStoreError as error:
+        return f"the skill library for this warm sweep cannot be read: {error}"
+    usable = [s for s in skills if s.active and s.domain in domains]
+    if usable:
+        return None
+    return (
+        f"a warm sweep needs learnt skills for this suite's websites "
+        f"({', '.join(sorted(domains))}), but {library} has "
+        + (f"{held} skill(s), none of them active on those sites" if held else "none")
+        + ". Run the cold sweep first, then learn from it with "
+        "`waa induce --all <the cold sweep's folder>`"
+    )
+
+
 def default_sweep_dir(runs_root: Path, profile: str, cold: bool) -> Path:
     """Name a sweep's folder from what it measures.
 
@@ -682,10 +752,22 @@ class Harness:
         real library has changed since.
 
         Raises:
-            HarnessError: If the folder holds a different sweep, or the model
-                settings cannot be used.
+            HarnessError: If the folder holds a different sweep, the model
+                settings cannot be used, or the skill library does not suit
+                the sweep (see :func:`library_problem`).
         """
         spec = self.spec()
+        # Checked before anything is written, so a refused sweep leaves no
+        # folder behind. On a restart the sweep's own copy is what it uses;
+        # on a first start, the real library (warm) or nothing (cold).
+        snapshot = self.folder / LIBRARY_DIR
+        starting_library = (
+            snapshot if snapshot.exists() else (snapshot if self.cold else self._skills_root)
+        )
+        problem = library_problem(starting_library, self.suite, cold=self.cold)
+        if problem is not None:
+            raise HarnessError(problem)
+
         # Built once before any worker starts, so a missing key stops the
         # sweep here instead of failing every trial in turn.
         try:
@@ -993,3 +1075,25 @@ def iter_verdicts(sweep_dir: Path) -> Iterator[tuple[Path, TrialVerdict]]:
         verdict = _read_verdict(path.parent)
         if verdict is not None:
             yield path.parent, verdict
+
+
+def passing_trials(sweep_dir: Path) -> list[tuple[Path, str]]:
+    """List the trials a sweep marked a pass, to learn skills from.
+
+    What the benchmark marked, not what the agent claimed: a run can end
+    believing it succeeded and still be failed by the checks, and a skill
+    learnt from it would be a recipe for the wrong answer.
+
+    Args:
+        sweep_dir: The sweep's folder.
+
+    Returns:
+        list[tuple[Path, str]]: Each passing trial's folder and its task, in
+        task order and then trial order -- so the first passing trial of each
+        task comes first.
+    """
+    return [
+        (folder, folder.parent.name)
+        for folder, verdict in iter_verdicts(sweep_dir)
+        if verdict.passed
+    ]

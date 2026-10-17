@@ -66,12 +66,16 @@ from typing import Any
 
 from .agreement import DEFAULT_MIN_LABELS, Agreement, measure
 from .budget import JUDGE_LOG, read_calls
-from .eval_harness import SWEEP_FILE, VERDICT_FILE
+from .eval_harness import LIBRARY_DIR, SWEEP_FILE, VERDICT_FILE
 from .judge import FAIL, FAILURE_CATEGORIES, PASS
+from .skill_store import SkillStore, SkillStoreError
 from .trace import OUTCOME_FILE
 
 #: The file comparing every sweep, in the results folder.
 COMPARISON_FILE = "README.md"
+
+#: The file comparing each cold sweep with its warm partner.
+COLD_VS_WARM_FILE = "cold_vs_warm.md"
 
 #: Where human verdicts are kept, one JSON object per line. Written by the
 #: review tool; each record names a trial folder and the human's verdict.
@@ -774,6 +778,192 @@ def comparison_table(
     return "\n".join(lines) + "\n"
 
 
+# --- Cold versus warm ---------------------------------------------------------------
+
+
+def _change(cold: float | None, warm: float | None, unit: str = "") -> str:
+    """Write the change from cold to warm, with its relative size.
+
+    Args:
+        cold: The cold arm's figure, or None if unknown.
+        warm: The warm arm's figure, or None if unknown.
+        unit: Written after the number, such as `` s``.
+
+    Returns:
+        str: For example ``-4.1 (-44.6%)``. ``unknown`` if either side is
+        unknown, since a change against an unknown is not a change.
+    """
+    if cold is None or warm is None:
+        return "unknown"
+    difference = warm - cold
+    text = f"{difference:+,.1f}{unit}"
+    if cold:
+        text += f" ({difference / cold:+.1%})"
+    return text
+
+
+def _cost_change(cold: Averages, warm: Averages) -> str:
+    """Write the change in dollars per trial, or why it cannot be given.
+
+    Args:
+        cold: The cold arm's averages.
+        warm: The warm arm's averages.
+
+    Returns:
+        str: For example ``$-0.0021 (-40.0%)``, or ``unknown`` when either
+        arm had a call with no price.
+    """
+    if cold.cost_usd is None or warm.cost_usd is None:
+        return "unknown (some calls had no price)"
+    difference = warm.cost_usd - cold.cost_usd
+    text = f"${difference:+.4f}"
+    if cold.cost_usd:
+        text += f" ({difference / cold.cost_usd:+.1%})"
+    return text
+
+
+def _library_line(sweep: SweepResults) -> str:
+    """Say what a sweep's skill library held when it started.
+
+    Args:
+        sweep: A sweep.
+
+    Returns:
+        str: For example ``9 skills (8 active) on 4 sites``, or ``empty``.
+    """
+    library = sweep.folder / LIBRARY_DIR
+    try:
+        skills = SkillStore(library).load_all() if library.is_dir() else ()
+    except SkillStoreError:
+        return "unreadable"
+    if not skills:
+        return "empty"
+    active = sum(s.active for s in skills)
+    sites = len({s.domain for s in skills})
+    return f"{len(skills)} skills ({active} active) on {sites} site{'s' if sites != 1 else ''}"
+
+
+def cold_warm_pairs(sweeps: Iterable[SweepResults]) -> list[tuple[SweepResults, SweepResults]]:
+    """Pair each cold sweep with the warm sweep of the same suite and model.
+
+    Args:
+        sweeps: Every sweep.
+
+    Returns:
+        list[tuple[SweepResults, SweepResults]]: (cold, warm) pairs that ran
+        the same suite on the same profile and model, in name order. A sweep
+        with no partner is left out: there is nothing to compare it with.
+    """
+    by_arm: dict[tuple[Any, ...], dict[str, SweepResults]] = {}
+    for sweep in sweeps:
+        spec = sweep.spec
+        key = (spec.get("suite"), spec.get("profile"), spec.get("model"))
+        by_arm.setdefault(key, {})[spec.get("library", "")] = sweep
+    pairs = [
+        (arms["cold"], arms["warm"]) for arms in by_arm.values() if {"cold", "warm"} <= arms.keys()
+    ]
+    return sorted(pairs, key=lambda pair: pair[0].name)
+
+
+def cold_vs_warm_table(
+    pairs: Sequence[tuple[SweepResults, SweepResults]], results_dir: Path
+) -> str:
+    """Write the Markdown comparing each cold sweep with its warm one.
+
+    This is the table behind the project's main claim: that learning skills
+    from what worked makes the agent better at the same kind of task. Each
+    measure is given for both arms, with the change from cold to warm, and
+    every figure states how many trials it rests on.
+
+    Args:
+        pairs: (cold, warm) sweeps, from :func:`cold_warm_pairs`.
+        results_dir: The folder the file will be written to.
+
+    Returns:
+        str: The whole Markdown document.
+    """
+    lines = [
+        "# Cold vs. warm skill library",
+        "",
+        (
+            "The same tasks on the same model, twice. **Cold**: an empty skill library. "
+            "**Warm**: the library learnt from the cold pass's passing trials, each skill "
+            "checked on a live page before it was kept. Success rate is the mean over "
+            "rounds of trials, with the lowest and highest round. A change in success "
+            "rate is in percentage points; other changes also give the relative size."
+        ),
+    ]
+    for cold, warm in pairs:
+        cold_rate, warm_rate = success_rate(cold.rows), success_rate(warm.rows)
+        cold_avg, warm_avg = averages(cold.marked), averages(warm.marked)
+        cold_tasks = len({r.task_id for r in cold.marked})
+        warm_tasks = len({r.task_id for r in warm.marked})
+        points = (
+            f"{(warm_rate.mean - cold_rate.mean) * 100:+.1f} points"
+            if cold_rate.rounds and warm_rate.rounds
+            else "unknown"
+        )
+        cold_link = _link(results_dir / f"{cold.name}.md", results_dir)
+        warm_link = _link(results_dir / f"{warm.name}.md", results_dir)
+        lines += [
+            "",
+            f"## {cold.spec.get('profile', '?')} (`{cold.spec.get('model', '?')}`)",
+            "",
+            (
+                f"Suite **{cold.spec.get('suite', '?')}** · cold [{cold.name}]({cold_link}), "
+                f"started {cold.spec.get('started_at', '?')} · warm [{warm.name}]({warm_link}), "
+                f"started {warm.spec.get('started_at', '?')}"
+            ),
+            "",
+            "| Measure | Cold | Warm | Change |",
+            "|---|---|---|---|",
+            f"| Success rate | {cold_rate.render()} | {warm_rate.render()} | {points} |",
+            (
+                f"| Trials marked (N) | {cold_rate.marked} ({cold_tasks} tasks × "
+                f"{cold.trials_per_task}) | {warm_rate.marked} ({warm_tasks} tasks × "
+                f"{warm.trials_per_task}) | |"
+            ),
+            (
+                f"| Trials passed | {cold_rate.passed} | {warm_rate.passed} | "
+                f"{warm_rate.passed - cold_rate.passed:+d} |"
+            ),
+            (
+                f"| Average steps per trial | {cold_avg.steps:.1f} | {warm_avg.steps:.1f} | "
+                f"{_change(cold_avg.steps, warm_avg.steps)} |"
+            ),
+            (
+                f"| Average tokens per trial | {render_tokens(cold_avg.tokens)} | "
+                f"{render_tokens(warm_avg.tokens)} | {_change(cold_avg.tokens, warm_avg.tokens)} |"
+            ),
+            (
+                f"| Average time per trial | {cold_avg.wall_s:.1f} s | {warm_avg.wall_s:.1f} s | "
+                f"{_change(cold_avg.wall_s, warm_avg.wall_s, ' s')} |"
+            ),
+            (
+                "| Average cost per trial (agent) | "
+                f"{render_cost(cold_avg.cost_usd, cold_avg.unpriced_calls)} | "
+                f"{render_cost(warm_avg.cost_usd, warm_avg.unpriced_calls)} | "
+                f"{_cost_change(cold_avg, warm_avg)} |"
+            ),
+            f"| Skill library at the start | {_library_line(cold)} | {_library_line(warm)} | |",
+            "",
+            "### Per task",
+            "",
+            "| Task | Cold passed | Warm passed | Cold avg steps | Warm avg steps |",
+            "|---|---|---|---|---|",
+        ]
+        for task_id in sorted({r.task_id for r in (*cold.marked, *warm.marked)}):
+            cold_rows = [r for r in cold.marked if r.task_id == task_id]
+            warm_rows = [r for r in warm.marked if r.task_id == task_id]
+            cold_passed = sum(r.status == PASS for r in cold_rows)
+            warm_passed = sum(r.status == PASS for r in warm_rows)
+            lines.append(
+                f"| {task_id} | {cold_passed}/{len(cold_rows)} | {warm_passed}/{len(warm_rows)} | "
+                f"{averages(cold_rows).steps:.1f} | {averages(warm_rows).steps:.1f} |"
+            )
+    return "\n".join(lines) + "\n"
+
+
 def find_sweeps(runs_root: Path) -> list[Path]:
     """Find every sweep folder directly under a runs folder.
 
@@ -799,7 +989,9 @@ def write_results(
             with their count and a warning.
 
     Returns:
-        list[Path]: The files written: one per sweep, then the comparison.
+        list[Path]: The files written: one per sweep, then the cold-versus-
+        warm table when a cold sweep and its warm partner are both there,
+        then the comparison.
 
     Raises:
         MetricsError: If a folder is not a sweep folder, or any failure in
@@ -815,6 +1007,13 @@ def write_results(
         path = results_dir / f"{sweep.name}.md"
         path.write_text(sweep_table(sweep, results_dir, labels, min_labels), encoding="utf-8")
         written.append(path)
+    # The headline comparison, whenever a cold sweep and its warm partner
+    # are both there.
+    pairs = cold_warm_pairs(sweeps)
+    if pairs:
+        cold_vs_warm = results_dir / COLD_VS_WARM_FILE
+        cold_vs_warm.write_text(cold_vs_warm_table(pairs, results_dir), encoding="utf-8")
+        written.append(cold_vs_warm)
     comparison = results_dir / COMPARISON_FILE
     comparison.write_text(
         comparison_table(sweeps, results_dir, labels, min_labels), encoding="utf-8"

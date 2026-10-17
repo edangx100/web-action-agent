@@ -40,6 +40,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from test_skills_cli import a_skill
 from typer.testing import CliRunner
 
 from web_action_agent import cli
@@ -73,6 +74,7 @@ from web_action_agent.eval_harness import (
 from web_action_agent.judge import FAIL, JUDGING_ERROR, PASS, JudgeVerdict
 from web_action_agent.model_client import ModelClient, load_profile
 from web_action_agent.politeness import Throttle
+from web_action_agent.skill_store import SkillStore
 from web_action_agent.trace import OUTCOME_FILE, RUN_FILE
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -542,8 +544,7 @@ def test_the_sweep_records_what_it_is_and_when_it_started(tmp_path: Path) -> Non
 @pytest.mark.unit
 def test_a_warm_sweep_runs_on_a_fixed_copy_of_the_library(tmp_path: Path) -> None:
     skills = tmp_path / "skills"
-    skills.mkdir()
-    (skills / "search.json").write_text('{"name": "search"}')
+    original = SkillStore(skills).save(a_skill("search", domain="fixture.test")).read_text()
     sweep = tmp_path / "sweep"
 
     def runner(trial: Trial, config: Config, folder: Path, browser: Any) -> None:
@@ -557,13 +558,13 @@ def test_a_warm_sweep_runs_on_a_fixed_copy_of_the_library(tmp_path: Path) -> Non
     (skills / "added-later.json").write_text("{}")
     fake_harness(sweep, runner, trials=2, cold=False, skills_root=skills).run()
 
-    assert (sweep / LIBRARY_DIR / "search.json").read_text() == '{"name": "search"}', (
+    assert (sweep / LIBRARY_DIR / "search.json").read_text() == original, (
         "the sweep's copy is untouched by the trials"
     )
     assert not (sweep / LIBRARY_DIR / "added-later.json").exists(), (
         "and a restart keeps the copy the sweep started with"
     )
-    assert (skills / "search.json").read_text() == '{"name": "search"}', "the real library too"
+    assert (skills / "search.json").read_text() == original, "the real library too"
 
 
 @pytest.mark.unit
