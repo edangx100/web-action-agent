@@ -373,7 +373,7 @@ def test_the_table_shows_both_arms_the_change_and_n(tmp_path: Path) -> None:
     # Warm halves each, rounding down: 6 + 11 + 13 + 4 = 34, so 3.09.
     # Change: 3.09 - 6.45 = -3.36, which is -52.1% of 6.45.
     assert "| Average steps per trial | 6.5 | 3.1 | -3.4 (-52.1%) |" in table
-    assert "| Average cost per trial (agent) | $0.0020 | $0.0010 | $-0.0010 (-50.0%) |" in table
+    assert "| Average cost per trial (agent) | $0.0020 | $0.0010 | -$0.0010 (-50.0%) |" in table
     assert "| Skill library at the start | empty | 2 skills (1 active) on 2 sites | |" in table
     assert "| bravo | 2/3 | 3/3 |" in table
     assert "[eval-openrouter-cold](eval-openrouter-cold.md)" in table

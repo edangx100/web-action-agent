@@ -810,13 +810,14 @@ def _cost_change(cold: Averages, warm: Averages) -> str:
         warm: The warm arm's averages.
 
     Returns:
-        str: For example ``$-0.0021 (-40.0%)``, or ``unknown`` when either
+        str: For example ``-$0.0021 (-40.0%)``, or ``unknown`` when either
         arm had a call with no price.
     """
     if cold.cost_usd is None or warm.cost_usd is None:
         return "unknown (some calls had no price)"
     difference = warm.cost_usd - cold.cost_usd
-    text = f"${difference:+.4f}"
+    # The sign goes before the dollar sign: "-$0.0010", not "$-0.0010".
+    text = f"{'-' if difference < 0 else '+'}${abs(difference):.4f}"
     if cold.cost_usd:
         text += f" ({difference / cold.cost_usd:+.1%})"
     return text
