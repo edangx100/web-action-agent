@@ -101,6 +101,10 @@ DEFAULT_SEED = 0
 #: The status an endpoint sends to say "you are asking too fast".
 TOO_MANY_REQUESTS = 429
 
+#: The status an empty reply is treated as: "bad gateway", the host behind the
+#: aggregator failed. Waited out like any other failure on the host's side.
+BAD_GATEWAY = 502
+
 #: Why a run ended, when the endpoint kept saying it was too busy.
 RATE_LIMITED = "rate_limited"
 
@@ -1301,28 +1305,37 @@ class ModelClient:
                     raise ModelClientError(
                         f"call to {self.profile.name} ({route.model}) failed: {error}"
                     ) from error
-                if attempt == self.backoff.attempts:
-                    raise ModelBusyError(
-                        f"{self.profile.name} ({route.model}) refused {attempt} attempts "
-                        f"with {status}; gave up after "
-                        f"{sum(event.waited_s for event in backoffs):.1f}s of waiting",
-                        status=status,
-                        backoffs=tuple(backoffs),
-                    ) from error
-
+                cause: Exception | None = error
+                refused = f"refused {attempt} attempts with {status}"
                 asked_s = _retry_after_of(error)
-                waited = self.backoff.wait_after(attempt, asked_s=asked_s, spread=self._spread())
-                backoffs.append(
-                    BackoffEvent(
-                        attempt=attempt,
-                        status=status,
-                        waited_s=waited,
-                        asked_s=asked_s,
-                    )
+            else:
+                if getattr(completion, "choices", None):
+                    return completion, time.perf_counter() - started, tuple(backoffs)
+                # An answer with nothing in it. An aggregator sends this when
+                # the host behind it failed, instead of an error status, so it
+                # is the host's side broken -- a 502 in all but name -- and
+                # worth the same wait as one.
+                status, cause, asked_s = BAD_GATEWAY, None, None
+                refused = f"answered {attempt} attempts with an empty reply"
+
+            if attempt == self.backoff.attempts:
+                raise ModelBusyError(
+                    f"{self.profile.name} ({route.model}) {refused}; gave up after "
+                    f"{sum(event.waited_s for event in backoffs):.1f}s of waiting",
+                    status=status,
+                    backoffs=tuple(backoffs),
+                ) from cause
+
+            waited = self.backoff.wait_after(attempt, asked_s=asked_s, spread=self._spread())
+            backoffs.append(
+                BackoffEvent(
+                    attempt=attempt,
+                    status=status,
+                    waited_s=waited,
+                    asked_s=asked_s,
                 )
-                self._sleep(waited)
-                continue
-            return completion, time.perf_counter() - started, tuple(backoffs)
+            )
+            self._sleep(waited)
 
         # Unreachable: the loop either returns, or raises on its last attempt.
         # Written out anyway because a `for` that falls through silently is how

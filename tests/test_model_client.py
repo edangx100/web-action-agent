@@ -600,9 +600,11 @@ def test_a_reply_with_no_choices_is_a_failure_not_an_empty_action() -> None:
     """Some endpoints answer 200 with nothing in it; that is not a plan."""
     transport = StubTransport()
     transport.chat.completions.create = lambda **_: SimpleNamespace(choices=[], usage=None)
+    # Waited out before giving up (see test_backoff.py); no real waiting here.
+    client = ModelClient(load_profile("nvidia"), transport=transport, env={}, sleep=lambda s: None)
 
     with pytest.raises(ModelClientError):
-        call(client_for(load_profile("nvidia"), transport=transport))
+        call(client)
 
 
 @pytest.mark.unit

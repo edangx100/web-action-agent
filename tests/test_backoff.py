@@ -522,3 +522,59 @@ def test_a_record_with_no_waiting_says_zero_rather_than_nothing():
 
     assert record.waited_s == 0.0
     assert record.backoffs == ()
+
+
+# --- An empty reply ------------------------------------------------------------
+
+
+class SometimesEmpty(Endpoint):
+    """A transport that answers with no choices a given number of times, then properly.
+
+    An aggregator does this when the host behind it fails: a "success" with
+    nothing in it, instead of an error status.
+    """
+
+    def __init__(self, empties):
+        """Args: empties: How many empty replies before a real one (-1: forever)."""
+        super().__init__()
+        self._empties = empties
+
+    def _create(self, **request):
+        """Answer with nothing, or properly once the empties are used up.
+
+        Args:
+            **request: The call body.
+
+        Returns:
+            SimpleNamespace: A completion, empty or not.
+        """
+        if self._empties != 0:
+            self._empties -= 1
+            self.attempts += 1
+            self.requests.append(request)
+            return SimpleNamespace(choices=[], usage=None)
+        return super()._create(**request)
+
+
+@pytest.mark.mock_llm
+def test_an_empty_reply_is_waited_out_like_a_broken_host():
+    client, recorder = a_client(SometimesEmpty(2))
+
+    response = call(client)
+
+    assert response.text == REPLY, "the third attempt got through"
+    assert len(recorder.waits) == 2, "after two pauses"
+    assert [event.status for event in response.record.backoffs] == [502, 502]
+
+
+@pytest.mark.mock_llm
+def test_a_host_that_only_answers_empty_ends_as_an_ai_service_error():
+    endpoint = SometimesEmpty(-1)
+    client, _ = a_client(endpoint, backoff=Backoff(attempts=3))
+
+    with pytest.raises(ModelBusyError) as raised:
+        call(client)
+
+    assert endpoint.attempts == 3
+    assert raised.value.category == ENDPOINT_UNAVAILABLE, "the host's side, not the agent"
+    assert "answered 3 attempts with an empty reply" in str(raised.value)

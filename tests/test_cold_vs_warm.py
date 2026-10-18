@@ -402,24 +402,30 @@ def test_no_table_without_both_arms(tmp_path: Path) -> None:
 
 # --- The driver script ------------------------------------------------------------------
 
-#: A stand-in for ``waa``: logs its arguments, and exits with the code named for
-#: that command in FAKE_EXIT_<command>, if set. ``eval --warm`` also makes the
-#: warm sweep's folder, as the real one does.
+#: A stand-in for ``waa``: logs its arguments, and exits with the codes named
+#: for that command in FAKE_EXIT_<command> -- one per call, space-separated,
+#: the last repeating ("1 0": unfinished, then finished). ``eval --warm`` also
+#: makes the warm sweep's folder, as the real one does.
 FAKE_WAA = """#!/usr/bin/env bash
 echo "$*" >> "$FAKE_LOG"
 if [[ "$1 $2" == "eval --warm" ]]; then mkdir -p runs/eval-openrouter-warm; fi
 var="FAKE_EXIT_$1"
-exit "${!var:-0}"
+read -r -a codes <<< "${!var:-0}"
+counter="$FAKE_LOG.$1"
+n=$(cat "$counter" 2>/dev/null || echo 0)
+echo $((n + 1)) > "$counter"
+last=$((${#codes[@]} - 1))
+exit "${codes[$((n < last ? n : last))]}"
 """
 
 
-def drive(tmp_path: Path, *args: str, **exits: int) -> tuple[int, list[str], str]:
-    """Run the driver script with a stand-in ``waa``.
+def drive(tmp_path: Path, *args: str, **exits: int | str) -> tuple[int, list[str], str]:
+    """Run the driver script with a stand-in ``waa``, and no pauses between tries.
 
     Args:
         tmp_path: The working directory for the run.
         *args: Arguments to the script.
-        **exits: Exit code per subcommand, e.g. ``eval=1``.
+        **exits: Exit codes per subcommand, e.g. ``eval=1`` or ``eval="1 0"``.
 
     Returns:
         tuple[int, list[str], str]: The script's exit code, the commands it
@@ -429,7 +435,7 @@ def drive(tmp_path: Path, *args: str, **exits: int) -> tuple[int, list[str], str
     fake.write_text(FAKE_WAA)
     fake.chmod(0o755)
     log = tmp_path / "calls.log"
-    env = {**os.environ, "WAA": str(fake), "FAKE_LOG": str(log)}
+    env = {**os.environ, "WAA": str(fake), "FAKE_LOG": str(log), "RETRY_WAIT_S": "0"}
     env.update({f"FAKE_EXIT_{name}": str(code) for name, code in exits.items()})
     done = subprocess.run(
         ["bash", str(SCRIPT), *args],
@@ -467,12 +473,47 @@ def test_the_script_passes_the_profile_and_trials_through(tmp_path: Path) -> Non
 
 
 @pytest.mark.unit
-def test_the_script_stops_when_the_cold_pass_does_not_finish(tmp_path: Path) -> None:
+def test_the_script_stops_when_the_cold_pass_never_finishes(tmp_path: Path) -> None:
     code, calls, said = drive(tmp_path, eval=1)
 
     assert code == 1
-    assert calls == ["eval --cold --trials 3 --profile openrouter"], "nothing after it"
-    assert "run this script again" in said
+    # Three tries, then nothing after it.
+    assert calls == ["eval --cold --trials 3 --profile openrouter"] * 3
+    assert "trying again in 0s (finished trials are kept)" in said
+    assert "run this script again later" in said
+
+
+@pytest.mark.unit
+def test_an_unfinished_pass_is_tried_again_and_the_sequence_carries_on(tmp_path: Path) -> None:
+    # As in the rehearsal: a few trials hit an AI-service error, so the cold
+    # pass ends unfinished; the next try runs just those, and finishes.
+    code, calls, said = drive(tmp_path, eval="1 0")
+
+    assert code == 0
+    assert calls == [
+        "eval --cold --trials 3 --profile openrouter",
+        "eval --cold --trials 3 --profile openrouter",
+        "induce --all runs/eval-openrouter-cold",
+        "eval --warm --trials 3 --profile openrouter",
+    ]
+    assert "cold pass (try 2 of 3)" in said
+
+
+@pytest.mark.unit
+def test_attempts_sets_how_many_tries_a_pass_gets(tmp_path: Path) -> None:
+    code, calls, _ = drive(tmp_path, "--attempts", "1", eval=1)
+
+    assert code == 1
+    assert len(calls) == 1
+
+
+@pytest.mark.unit
+def test_learning_is_never_tried_twice(tmp_path: Path) -> None:
+    # Finding nothing to learn is an answer, not a hiccup.
+    code, calls, _ = drive(tmp_path, induce=1)
+
+    assert code == 1
+    assert sum(c.startswith("induce") for c in calls) == 1
 
 
 @pytest.mark.unit
