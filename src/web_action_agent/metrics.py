@@ -75,7 +75,7 @@ from .eval_harness import (
 )
 from .judge import FAIL, FAILURE_CATEGORIES, PASS
 from .skill_store import SkillStore, SkillStoreError
-from .trace import OUTCOME_FILE
+from .trace import ACTION_LOG, OUTCOME_FILE
 
 #: The file comparing every sweep, in the results folder.
 COMPARISON_FILE = "README.md"
@@ -856,6 +856,60 @@ def _library_line(sweep: SweepResults) -> str:
     return f"{len(skills)} skills ({active} active) on {sites} site{'s' if sites != 1 else ''}"
 
 
+def used_a_skill(folder: Path) -> bool:
+    """Say whether a trial replayed a learnt skill, from its own record of its steps.
+
+    What happened, not what was available: a skill in the library that the
+    agent never chose to use did nothing for that trial.
+
+    Args:
+        folder: A trial's run folder.
+
+    Returns:
+        bool: True if any step of the run was a skill replay.
+    """
+    try:
+        lines = (folder / ACTION_LOG).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        try:
+            if json.loads(line).get("replay"):
+                return True
+        except (json.JSONDecodeError, AttributeError):
+            continue
+    return False
+
+
+def _group_line(label: str, cold: Sequence[TrialRow], warm: Sequence[TrialRow]) -> str:
+    """Write one row of the with-skill / without-skill split.
+
+    Args:
+        label: What the group is, for the first column.
+        cold: The group's marked cold trials.
+        warm: The group's marked warm trials.
+
+    Returns:
+        str: The passes, the share, and the average steps on each side, and
+        the change in percentage points and in steps.
+    """
+    if not cold or not warm:
+        return f"| {label} | — | — | no such tasks |"
+
+    def side(rows: Sequence[TrialRow]) -> tuple[str, float, float]:
+        passed = sum(r.status == PASS for r in rows)
+        share = passed / len(rows)
+        steps = averages(rows).steps
+        return f"{passed}/{len(rows)} ({share:.1%}), {steps:.1f} steps", share, steps
+
+    cold_text, cold_share, cold_steps = side(cold)
+    warm_text, warm_share, warm_steps = side(warm)
+    return (
+        f"| {label} | {cold_text} | {warm_text} | "
+        f"{(warm_share - cold_share) * 100:+.1f} points; steps {_change(cold_steps, warm_steps)} |"
+    )
+
+
 def cold_warm_pairs(sweeps: Iterable[SweepResults]) -> list[tuple[SweepResults, SweepResults]]:
     """Pair each cold sweep with the warm sweep of the same suite and model.
 
@@ -918,6 +972,11 @@ def cold_vs_warm_table(
         )
         cold_link = _link(results_dir / f"{cold.name}.md", results_dir)
         warm_link = _link(results_dir / f"{warm.name}.md", results_dir)
+        # Split by whether the warm pass actually used a skill on the task.
+        # The tasks it did not are a control: their change is luck alone.
+        helped = {r.task_id for r in warm.marked if used_a_skill(r.folder)}
+        n_helped = len(helped)
+        n_other = len({r.task_id for r in (*cold.marked, *warm.marked)} - helped)
         lines += [
             "",
             f"## {cold.spec.get('profile', '?')} (`{cold.spec.get('model', '?')}`)",
@@ -930,7 +989,17 @@ def cold_vs_warm_table(
             "",
             "| Measure | Cold | Warm | Change |",
             "|---|---|---|---|",
-            f"| Success rate | {cold_rate.render()} | {warm_rate.render()} | {points} |",
+            f"| Success rate (all tasks) | {cold_rate.render()} | {warm_rate.render()} | {points} |",
+            _group_line(
+                f"…on tasks where a skill was used ({n_helped})",
+                [r for r in cold.marked if r.task_id in helped],
+                [r for r in warm.marked if r.task_id in helped],
+            ),
+            _group_line(
+                f"…on tasks where none was ({n_other})",
+                [r for r in cold.marked if r.task_id not in helped],
+                [r for r in warm.marked if r.task_id not in helped],
+            ),
             (
                 f"| Trials marked (N) | {cold_rate.marked} ({cold_tasks} tasks × "
                 f"{cold.trials_per_task}) | {warm_rate.marked} ({warm_tasks} tasks × "
@@ -960,18 +1029,29 @@ def cold_vs_warm_table(
             ),
             f"| Skill library at the start | {_library_line(cold)} | {_library_line(warm)} | |",
             "",
+            (
+                "**Read the split before the headline.** A task counts as *a skill was "
+                "used* when any of its warm trials replayed a learnt skill. Only those "
+                "tasks can show the effect of learning. On the others the warm pass ran "
+                "exactly as the cold one did, so their change is how much the results "
+                "move between passes by chance alone. The split rows count passes over "
+                "all marked trials, rather than averaging rounds."
+            ),
+            "",
             "### Per task",
             "",
-            "| Task | Cold passed | Warm passed | Cold avg steps | Warm avg steps |",
-            "|---|---|---|---|---|",
+            "| Task | Skill used (warm) | Cold passed | Warm passed | Cold avg steps | Warm avg steps |",
+            "|---|---|---|---|---|---|",
         ]
         for task_id in sorted({r.task_id for r in (*cold.marked, *warm.marked)}):
             cold_rows = [r for r in cold.marked if r.task_id == task_id]
             warm_rows = [r for r in warm.marked if r.task_id == task_id]
             cold_passed = sum(r.status == PASS for r in cold_rows)
             warm_passed = sum(r.status == PASS for r in warm_rows)
+            used = "yes" if task_id in helped else "no"
             lines.append(
-                f"| {task_id} | {cold_passed}/{len(cold_rows)} | {warm_passed}/{len(warm_rows)} | "
+                f"| {task_id} | {used} | {cold_passed}/{len(cold_rows)} | "
+                f"{warm_passed}/{len(warm_rows)} | "
                 f"{averages(cold_rows).steps:.1f} | {averages(warm_rows).steps:.1f} |"
             )
     return "\n".join(lines) + "\n"

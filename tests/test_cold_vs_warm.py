@@ -60,9 +60,11 @@ from web_action_agent.metrics import (
     COLD_VS_WARM_FILE,
     cold_warm_pairs,
     load_sweep,
+    used_a_skill,
     write_results,
 )
 from web_action_agent.skill_store import SkillStore
+from web_action_agent.trace import ACTION_LOG
 
 REPO = Path(__file__).parent.parent
 
@@ -339,6 +341,18 @@ def improve(sweep: Path) -> None:
     verdict.write_text(json.dumps(data))
 
 
+def replayed_a_skill(sweep: Path, task: str) -> None:
+    """Record that every warm trial of a task replayed a learnt skill.
+
+    Args:
+        sweep: The warm sweep.
+        task: The task.
+    """
+    for folder in sweep.glob(f"{task}/trial-*"):
+        step = {"number": 1, "replay": {"skill": "a_skill", "ok": True}}
+        (folder / ACTION_LOG).write_text(json.dumps(step) + "\n")
+
+
 @pytest.mark.unit
 def test_cold_and_warm_sweeps_of_one_model_are_paired(tmp_path: Path) -> None:
     cold, warm = a_cold_and_a_warm_sweep(tmp_path)
@@ -357,6 +371,7 @@ def test_cold_and_warm_sweeps_of_one_model_are_paired(tmp_path: Path) -> None:
 def test_the_table_shows_both_arms_the_change_and_n(tmp_path: Path) -> None:
     cold, warm = a_cold_and_a_warm_sweep(tmp_path)
     improve(warm)
+    replayed_a_skill(warm, "bravo")
 
     written = write_results([cold, warm], tmp_path / "results")
     table = (tmp_path / "results" / COLD_VS_WARM_FILE).read_text()
@@ -364,7 +379,7 @@ def test_the_table_shows_both_arms_the_change_and_n(tmp_path: Path) -> None:
     assert tmp_path / "results" / COLD_VS_WARM_FILE in written
     # Worked by hand. Cold: rounds 3/4, 2/4, 3/3 -> (75 + 50 + 100) / 3 = 75.0%.
     # Warm: bravo-2 now passes, so 3/4, 3/4, 3/3 -> 83.3%. Change: +8.3 points.
-    assert "| Success rate | 75.0% (range 50.0%–100.0% over 3 rounds) |" in table
+    assert "| Success rate (all tasks) | 75.0% (range 50.0%–100.0% over 3 rounds) |" in table
     assert "| 83.3% (range 75.0%–100.0% over 3 rounds) | +8.3 points |" in table
     # 12 trials, one (delta-3) unmarked: N is 11 on each side.
     assert "| Trials marked (N) | 11 (4 tasks × 3) | 11 (4 tasks × 3) | |" in table
@@ -375,8 +390,57 @@ def test_the_table_shows_both_arms_the_change_and_n(tmp_path: Path) -> None:
     assert "| Average steps per trial | 6.5 | 3.1 | -3.4 (-52.1%) |" in table
     assert "| Average cost per trial (agent) | $0.0020 | $0.0010 | -$0.0010 (-50.0%) |" in table
     assert "| Skill library at the start | empty | 2 skills (1 active) on 2 sites | |" in table
-    assert "| bravo | 2/3 | 3/3 |" in table
+    assert "| bravo | yes | 2/3 | 3/3 |" in table
+    assert "| alpha | no | 3/3 | 3/3 |" in table
     assert "[eval-openrouter-cold](eval-openrouter-cold.md)" in table
+
+
+@pytest.mark.unit
+def test_the_table_splits_tasks_a_skill_was_used_on_from_the_rest(tmp_path: Path) -> None:
+    cold, warm = a_cold_and_a_warm_sweep(tmp_path)
+    improve(warm)
+    replayed_a_skill(warm, "bravo")
+
+    write_results([cold, warm], tmp_path / "results")
+    table = (tmp_path / "results" / COLD_VS_WARM_FILE).read_text()
+
+    # Worked by hand. bravo, where a skill was used: cold passes 2 of 3 at
+    # steps 6, 10, 6 (7.3 on average); warm passes 3 of 3 at half those steps,
+    # rounded down -- 3, 5, 3 (3.7). +33.3 points; steps -3.7, i.e. -50.0%.
+    assert (
+        "| …on tasks where a skill was used (1) | 2/3 (66.7%), 7.3 steps | "
+        "3/3 (100.0%), 3.7 steps | +33.3 points; steps -3.7 (-50.0%) |"
+    ) in table
+    # The other three, where none was: 6 of 8 marked trials pass on both
+    # sides, so a change of nothing -- the control. Steps 49/8 = 6.1 cold,
+    # 23/8 = 2.9 warm (made-up data: improve() halved every trial's steps).
+    assert (
+        "| …on tasks where none was (3) | 6/8 (75.0%), 6.1 steps | "
+        "6/8 (75.0%), 2.9 steps | +0.0 points;"
+    ) in table
+    assert "Read the split before the headline." in table
+
+
+@pytest.mark.unit
+def test_with_no_skill_used_the_split_says_so(tmp_path: Path) -> None:
+    cold, warm = a_cold_and_a_warm_sweep(tmp_path)
+
+    write_results([cold, warm], tmp_path / "results")
+    table = (tmp_path / "results" / COLD_VS_WARM_FILE).read_text()
+
+    assert "| …on tasks where a skill was used (0) | — | — | no such tasks |" in table
+
+
+@pytest.mark.unit
+def test_a_skill_counts_as_used_only_if_a_step_replayed_it(tmp_path: Path) -> None:
+    folder = tmp_path / "trial"
+    folder.mkdir()
+    (folder / ACTION_LOG).write_text(json.dumps({"number": 1, "replay": None}) + "\n")
+    assert used_a_skill(folder) is False, "offered, not used"
+    assert used_a_skill(tmp_path / "missing") is False
+    replay = {"number": 2, "replay": {"skill": "x", "ok": False}}
+    (folder / ACTION_LOG).write_text(json.dumps(replay) + "\n")
+    assert used_a_skill(folder) is True, "used, even if the replay then failed"
 
 
 @pytest.mark.unit
