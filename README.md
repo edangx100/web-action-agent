@@ -102,7 +102,7 @@ it on one model: the benchmark with an empty skill library, then learning from
 that pass's passing trials, then the benchmark again with what was learnt.
 
 ```bash
-scripts/cold_vs_warm.sh --profile openrouter --trials 3
+uv run scripts/cold_vs_warm.sh --profile openrouter --trials 3
 ```
 
 It spends real money and visits the benchmark's live sites; each pass has its

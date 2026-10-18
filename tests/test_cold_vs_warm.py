@@ -559,7 +559,21 @@ def test_the_script_explains_itself(tmp_path: Path) -> None:
     )
 
     assert done.returncode == 0
-    assert "Usage:" in done.stdout and "spends real money" in done.stdout
+    assert "uv run scripts/cold_vs_warm.sh" in done.stdout, "how to run it"
+    assert "spends real money" in done.stdout
+
+
+@pytest.mark.unit
+def test_the_script_says_how_to_run_it_when_waa_is_not_on_the_path(tmp_path: Path) -> None:
+    env = {**os.environ, "WAA": "no-such-waa-command"}
+
+    done = subprocess.run(
+        ["bash", str(SCRIPT)], cwd=tmp_path, env=env, capture_output=True, text=True, check=False
+    )
+
+    assert done.returncode == 2, "a usage problem, not a failed pass"
+    assert "uv run scripts/cold_vs_warm.sh" in done.stderr
+    assert not (tmp_path / "runs").exists(), "and nothing was started"
 
 
 @pytest.mark.unit

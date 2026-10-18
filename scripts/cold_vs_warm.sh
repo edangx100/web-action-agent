@@ -11,8 +11,8 @@
 #
 # The results land in results/cold_vs_warm.md, beside the other tables.
 #
-# Usage:
-#   scripts/cold_vs_warm.sh [--profile NAME] [--trials N] [--attempts N]
+# Usage (from the project folder; `uv run` puts the project's `waa` on the path):
+#   uv run scripts/cold_vs_warm.sh [--profile NAME] [--trials N] [--attempts N]
 #
 #   --profile   the endpoint profile to use for both passes (default: openrouter)
 #   --trials    trials per task in each pass (default: 3)
@@ -54,6 +54,15 @@ while [[ $# -gt 0 ]]; do
     *) echo "cold_vs_warm: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+# Said before anything starts: run outside the project's environment, `waa`
+# is simply not on the path, and the shell's own "command not found" does not
+# say how to fix it.
+if ! command -v "$WAA" > /dev/null 2>&1; then
+  echo "cold_vs_warm: cannot find the '$WAA' command. Run this from the project" \
+    "folder as: uv run scripts/cold_vs_warm.sh ... (or set WAA to the command's path)." >&2
+  exit 2
+fi
 
 # Where each pass keeps its runs. Must match the names `waa eval` picks.
 cold_dir="runs/eval-${profile}-cold"
