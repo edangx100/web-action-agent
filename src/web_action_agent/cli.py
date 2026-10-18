@@ -94,6 +94,10 @@ EXIT_USAGE = 2
 #: run's screenshots go here, which is why the folder exists this early.
 RUNS_ROOT = Path("runs")
 
+#: Where the screenshots of each skill check go, inside the runs folder: one
+#: folder per check, named for when it ran and the skill it checked.
+VERIFICATION_DIR = "_verification"
+
 #: Where the learned skills live. One folder of readable files, beside the run
 #: folders, so that what the agent has learnt is as easy to look at as what it
 #: did.
@@ -384,7 +388,10 @@ def _induce_from(
             # -- is said, so a corrected candidate is never a silent one.
             for note in induction.notes:
                 typer.echo(f"  {_name(folder)}: note: {note}", err=True)
-            verdict = _check(config, browser, candidate, run.start_url, judge)
+            # The replay's screenshots are kept, so a candidate that is
+            # discarded can be looked into rather than taken on trust.
+            evidence = _evidence_dir(candidate)
+            verdict = _check(config, browser, candidate, run.start_url, judge, evidence)
             if verdict is None:
                 continue
             if verdict.passed:
@@ -398,11 +405,25 @@ def _induce_from(
             else:
                 discarded += 1
                 typer.echo(f"  {_name(folder)}: {verdict.summary()}", err=True)
+                typer.echo(f"  {_name(folder)}: the check's screenshots: {evidence}", err=True)
 
     typer.echo(f"{induced} induced, {verified} verified, {discarded} discarded", err=True)
     if verified:
         typer.echo(f"library: {SKILLS_ROOT}", err=True)
     return EXIT_TASK_FAILURE if induced and not verified else EXIT_SUCCESS
+
+
+def _evidence_dir(candidate: Skill) -> Path:
+    """Choose the folder for one skill check's screenshots.
+
+    Args:
+        candidate: The skill about to be checked.
+
+    Returns:
+        Path: ``runs/_verification/<time>-<skill name>``, new for each check.
+    """
+    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+    return RUNS_ROOT / VERIFICATION_DIR / f"{stamp}-{candidate.name}"
 
 
 def _name(folder: Path) -> str:
@@ -427,6 +448,7 @@ def _check(
     candidate: Skill,
     start_url: str,
     judge: ModelClient | None,
+    evidence: Path | None = None,
 ) -> Verification | None:
     """Replay one candidate with different values, and say whether it worked.
 
@@ -442,6 +464,7 @@ def _check(
             planner may make from wherever the agent already is.
         judge: The model that decides whether the final page is right, or None
             for the mechanical layer alone.
+        evidence: Where the replay's screenshots go, or None for nowhere.
 
     Returns:
         Verification | None: The verdict, or None when the check could not be
@@ -456,6 +479,7 @@ def _check(
             validator=Validator(Allowlist.derive(start_url)),
             config=config,
             judge=judge,
+            screenshot_dir=evidence,
         )
         try:
             return verifier.verify(candidate, start_url=start_url)

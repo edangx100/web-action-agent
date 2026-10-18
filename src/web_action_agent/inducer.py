@@ -384,7 +384,9 @@ class Inducer:
             usable: The steps making up the route.
 
         Returns:
-            str: The task, where it happened, what was done, and the answer.
+            str: The task, where it happened, what was done, the values it
+            typed or visited (the only candidates for parameters), what the
+            last page said, and the answer.
         """
         steps = "\n".join(
             f"{number}. {describe_action(action, observation)}"
@@ -397,10 +399,21 @@ class Inducer:
         answer = (
             run.outcome.answer if run.outcome and run.outcome.answer else "(no answer asked for)"
         )
+        # The only values that can become parameters, listed so the model
+        # picks from them rather than from figures it read on a page -- which
+        # a replay never types, so no step could ever use them.
+        values = [action.text for action, _ in usable if isinstance(action, Fill)]
+        values += [action.url for action, _ in usable if isinstance(action, Navigate)]
+        typed = (
+            "\n".join(f"- {value!r}" for value in dict.fromkeys(values))
+            or "(none: this run only clicked, scrolled or pressed keys, so the recipe "
+            "has no parameters)"
+        )
         return (
             f"## The task\n\n{run.task}\n\n"
             f"## The site\n\n{run.start_url}\n\n"
             f"## What the agent did\n\n{steps}\n\n"
+            f"## Values the run typed or visited\n\n{typed}\n\n"
             f"## What the last page said\n\n{final.text[:1500]}\n\n"
             f"## The answer it gave\n\n{answer}\n"
         )

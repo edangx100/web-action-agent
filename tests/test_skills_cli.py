@@ -379,6 +379,10 @@ def test_a_candidate_that_fails_its_check_is_discarded_with_a_reason(
     assert "1 induced, 0 verified, 1 discarded" in result.output
     assert "this is the home page" in result.output
     assert SkillStore(tmp_path / "skills").names() == (), "and nothing was stored"
+    # And the check's screenshots are kept, and named, for looking into it.
+    evidence = Path(result.output.split("the check's screenshots: ")[1].split()[0])
+    assert evidence.parent == tmp_path / "runs" / cli.VERIFICATION_DIR
+    assert list(evidence.glob("*.png")), "with at least one screenshot in it"
     assert result.exit_code == EXIT_TASK_FAILURE, "a pass that stored nothing is worth noticing"
 
 

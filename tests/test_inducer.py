@@ -499,6 +499,45 @@ def test_a_run_that_only_clicked_makes_a_skill_with_no_parameters() -> None:
     assert len([n for n in induction.notes if "was dropped" in n]) == 2
 
 
+@pytest.mark.mock_llm
+def test_the_model_is_shown_the_only_values_that_can_become_parameters() -> None:
+    inducer, endpoint = an_inducer()
+
+    inducer.induce(the_run())
+
+    assert "## Values the run typed or visited\n\n- 'membership'" in endpoint.prompt
+
+
+@pytest.mark.mock_llm
+def test_a_run_that_typed_nothing_is_said_to_have_no_parameters() -> None:
+    run = the_run()
+    clicked = dataclasses.replace(
+        run,
+        steps=tuple(
+            s for s in run.steps if s.action is not None and s.action.action in {"click", "done"}
+        ),
+    )
+    inducer, endpoint = an_inducer(
+        {
+            **A_GOOD_ANSWER,
+            "parameters": [],
+            "verification": {"params": [], "expected_outcome": "the membership record page"},
+        }
+    )
+
+    inducer.induce(clicked)
+
+    assert "(none: this run only clicked, scrolled or pressed keys" in endpoint.prompt
+
+
+@pytest.mark.unit
+def test_the_instructions_say_where_parameters_come_from() -> None:
+    instructions = an_inducer()[0].system_prompt
+
+    assert 'Parameters come only from "Values the run typed or visited"' in instructions
+    assert "With no parameters," in instructions
+
+
 # --- Runs that may not be learnt from ---------------------------------------
 
 

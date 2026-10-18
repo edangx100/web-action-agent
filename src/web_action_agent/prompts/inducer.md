@@ -21,6 +21,13 @@ Each one becomes a named parameter.
 
 Give the exact value as it appears in the run, so it can be found and replaced.
 
+**Parameters come only from "Values the run typed or visited".** That list is
+everything the recipe will ever type or go to. A figure, date, or label you
+read on a page -- an age group in a table, a population count, a tax rate --
+is not a parameter: the recipe never types it, so nothing could use it. If
+the list says there are none, the answer has no parameters, and that is a
+perfectly good recipe: a fixed route to a page.
+
 **Take everything that is specific.** A recipe with one blank left unfilled is a
 recipe that only does the one job it was recorded from, and nobody will notice
 until it quietly gives the wrong answer for a different job.
@@ -64,6 +71,12 @@ checking the final page with those values. Be specific enough to be wrong:
 "a record page whose subject tags include privacy" can be checked; "it worked"
 cannot.
 
+**With no parameters,** the check replays the same route, so give no values
+and describe the page that route reaches: "the Individual Income Tax rates
+page, showing the resident tax rates table". Describe what the page *is*,
+not a figure on it: the check happens later, and a figure that has been
+updated since would fail a route that still works.
+
 ## Answer with
 
 A JSON object only, no prose around it:
@@ -74,4 +87,5 @@ A JSON object only, no prose around it:
   run), `description` (one line on what belongs here), and `required`.
   Empty list if the run genuinely had no task-specific values.
 - `verification` — `params`, a list of `name`/`value` pairs using *different*
-  values, and `expected_outcome`, the one line.
+  values (empty when there are no parameters), and `expected_outcome`, the
+  one line.
