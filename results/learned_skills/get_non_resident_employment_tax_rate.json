@@ -1,0 +1,111 @@
+{
+  "name": "get_non_resident_employment_tax_rate",
+  "description": "retrieve the flat tax rate for non-resident employment income",
+  "domain": "iras.gov.sg",
+  "params": [],
+  "steps": [
+    {
+      "note": "Taxes",
+      "action": "click",
+      "selector": {
+        "name": "Taxes",
+        "role": "link",
+        "text": "Taxes",
+        "structural": "link[3]"
+      }
+    },
+    {
+      "note": "Self-Employed Individuals including Platform Workers and Partnerships",
+      "action": "click",
+      "selector": {
+        "name": "Self-Employed Individuals including Platform Workers and Partnerships",
+        "role": "link",
+        "text": "Self-Employed Individuals including Platform Workers and Partnerships",
+        "structural": "link[16]"
+      }
+    },
+    {
+      "note": "Non-Residents",
+      "action": "click",
+      "selector": {
+        "name": "Non-Residents",
+        "role": "link",
+        "text": "Non-Residents",
+        "structural": "link[17]"
+      }
+    },
+    {
+      "note": "Foreign employee Working in Singapore & tax filing (for employees & company/board directors etc)",
+      "action": "click",
+      "selector": {
+        "name": "Foreign employee Working in Singapore & tax filing (for employees & company/board directors etc)",
+        "role": "link",
+        "text": "Foreign employee Working in Singapore & tax filing (for employees & company/board directors etc)",
+        "structural": "link[14]"
+      }
+    },
+    {
+      "note": "",
+      "action": "scroll",
+      "direction": "down"
+    },
+    {
+      "note": "Tax residency and tax rates Check if you are a tax resident, and learn the benefits of tax residency in Singapore",
+      "action": "click",
+      "selector": {
+        "name": "Tax residency and tax rates Check if you are a tax resident, and learn the benefits of tax residency in Singapore",
+        "role": "button",
+        "text": "Tax residency and tax rates Check if you are a tax resident, and learn the benefits of tax residency in Singapore",
+        "structural": "button[9]"
+      }
+    },
+    {
+      "note": "Tax residency and tax rates Check if you are a tax resident, and learn the benefits of tax residency in Singapore",
+      "action": "click",
+      "selector": {
+        "name": "Tax residency and tax rates Check if you are a tax resident, and learn the benefits of tax residency in Singapore",
+        "role": "button",
+        "text": "Tax residency and tax rates Check if you are a tax resident, and learn the benefits of tax residency in Singapore",
+        "structural": "button[9]"
+      }
+    },
+    {
+      "note": "Tax residency and tax rates Check if you are a tax resident, and learn the benefits of tax residency in Singapore",
+      "action": "click",
+      "selector": {
+        "name": "Tax residency and tax rates Check if you are a tax resident, and learn the benefits of tax residency in Singapore",
+        "role": "button",
+        "text": "Tax residency and tax rates Check if you are a tax resident, and learn the benefits of tax residency in Singapore",
+        "structural": "button[9]"
+      }
+    },
+    {
+      "note": "",
+      "action": "scroll",
+      "direction": "down"
+    },
+    {
+      "note": "Individual Income Tax rates",
+      "action": "click",
+      "selector": {
+        "name": "Individual Income Tax rates",
+        "role": "link",
+        "text": "Individual Income Tax rates",
+        "structural": "link[9]"
+      }
+    }
+  ],
+  "verification": {
+    "params": {},
+    "expected_outcome": "the Individual Income Tax rates page indicating that the flat tax rate for non-resident employment income is 15%"
+  },
+  "stats": {
+    "uses": 0,
+    "successes": 0
+  },
+  "active": true,
+  "retired_reason": "",
+  "retired_at": "",
+  "induced_from": "run-f645b83a542a",
+  "created_at": "2026-10-18T05:44:30.665Z"
+}

@@ -1,0 +1,61 @@
+{
+  "name": "calculate_individual_income_tax",
+  "description": "Calculate the gross tax payable on the first $80,000 of chargeable income for tax residents from Year of Assessment 2024 onwards.",
+  "domain": "iras.gov.sg",
+  "params": [],
+  "steps": [
+    {
+      "note": "Taxes",
+      "action": "click",
+      "selector": {
+        "name": "Taxes",
+        "role": "link",
+        "text": "Taxes",
+        "structural": "link[3]"
+      }
+    },
+    {
+      "note": "Individual Income Tax",
+      "action": "click",
+      "selector": {
+        "name": "Individual Income Tax",
+        "role": "link",
+        "text": "Individual Income Tax",
+        "structural": "link[5]"
+      }
+    },
+    {
+      "note": "Tax residency and tax rates",
+      "action": "click",
+      "selector": {
+        "name": "Tax residency and tax rates",
+        "role": "link",
+        "text": "Tax residency and tax rates",
+        "structural": "link[23]"
+      }
+    },
+    {
+      "note": "Individual Income Tax rates View individual income tax rates that is applicable to your situation",
+      "action": "click",
+      "selector": {
+        "name": "Individual Income Tax rates View individual income tax rates that is applicable to your situation",
+        "role": "link",
+        "text": "Individual Income Tax rates View individual income tax rates that is applicable to your situation",
+        "structural": "link[13]"
+      }
+    }
+  ],
+  "verification": {
+    "params": {},
+    "expected_outcome": "the tax calculation example page illustrating tax payable on the first $80,000 of chargeable income"
+  },
+  "stats": {
+    "uses": 0,
+    "successes": 0
+  },
+  "active": true,
+  "retired_reason": "",
+  "retired_at": "",
+  "induced_from": "run-5c406f04fdb1",
+  "created_at": "2026-10-18T05:44:53.934Z"
+}

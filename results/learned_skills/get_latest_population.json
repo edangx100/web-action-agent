@@ -1,0 +1,31 @@
+{
+  "name": "get_latest_population",
+  "description": "Retrieve Singapore's latest total population figure and its year.",
+  "domain": "singstat.gov.sg",
+  "params": [],
+  "steps": [
+    {
+      "note": "Population",
+      "action": "click",
+      "selector": {
+        "name": "Population",
+        "role": "link",
+        "text": "Population",
+        "structural": "link[8]"
+      }
+    }
+  ],
+  "verification": {
+    "params": {},
+    "expected_outcome": "the page displaying Singapore's latest total population figure and the year it refers to"
+  },
+  "stats": {
+    "uses": 0,
+    "successes": 0
+  },
+  "active": true,
+  "retired_reason": "",
+  "retired_at": "",
+  "induced_from": "run-5dc6babc7f5a",
+  "created_at": "2026-10-18T05:45:12.853Z"
+}
