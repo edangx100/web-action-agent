@@ -13,7 +13,7 @@ from fixtures.site_server import StaticSite
 from marker_policy import policy_violations, violation_report
 from playwright.sync_api import Page, Playwright, sync_playwright
 
-from web_action_agent import config
+from web_action_agent import config, replay
 from web_action_agent.browser import BrowserProcess, BrowserSettings, TaskSession
 
 VIEWPORT = {"width": 1280, "height": 800}
@@ -57,6 +57,21 @@ def _no_local_secrets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(config, "DEFAULT_DOTENV_PATH", tmp_path / "absent.env")
     for name in [n for n in os.environ if n.startswith("WAA_")]:
         monkeypatch.delenv(name)
+
+
+@pytest.fixture(autouse=True)
+def _replays_do_not_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let a replay look again at once, rather than after a real pause.
+
+    A replay pauses before looking again for an element that has not appeared
+    yet. On the practice site nothing is slow to appear, so the pause would
+    only add seconds to every test whose element is genuinely missing. The
+    pause itself is tested directly, with a recorded sleep.
+
+    Args:
+        monkeypatch: Restores the real pause when the test ends.
+    """
+    monkeypatch.setattr(replay, "RELOOK_WAIT_S", 0.0)
 
 
 @pytest.hookimpl(tryfirst=True)

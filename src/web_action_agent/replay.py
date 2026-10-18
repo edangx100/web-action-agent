@@ -42,7 +42,8 @@ not the thing that will run.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -52,7 +53,7 @@ from .config import Config
 from .executor import Executor
 from .observation import Observation, capture
 from .reporting import describe_action
-from .selectors import Resolution, resolve
+from .selectors import TIER_STRUCTURAL, Resolution, resolve
 from .skill_schema import (
     ClickStep,
     FillStep,
@@ -69,6 +70,15 @@ from .validator import Validator
 #: import, for the same reason the validator declares one: the two components
 #: are built separately and neither should have to change when the other does.
 SkillSource = Any
+
+
+#: How many more looks a step gets when neither its name nor its text finds
+#: the element, before settling for its position or for nothing.
+RELOOKS = 2
+
+#: Seconds between those looks: long enough for a menu or a panel to finish
+#: appearing, short enough that a step that is really gone costs little.
+RELOOK_WAIT_S = 1.0
 
 
 class ReplayError(Exception):
@@ -298,6 +308,7 @@ class SkillReplayer:
         config: Config,
         library: SkillSource | None = None,
         screenshot_dir: Path | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         """Assemble a replayer.
 
@@ -312,8 +323,11 @@ class SkillReplayer:
                 needed by a caller that already holds the skill, which is how
                 the verifier uses this.
             screenshot_dir: Where the replay's screenshots go, if anywhere.
+            sleep: How the replay waits before looking again. Swappable so
+                tests need not wait.
         """
         self._executor = executor
+        self._sleep = sleep
         self._validator = validator
         self._config = config
         self._library = library
@@ -366,11 +380,13 @@ class SkillReplayer:
                 missing, which would make the route unrunnable from the start.
         """
         done: list[ReplayedStep] = []
+        # The values the skill was recorded with, so a stored name that held
+        # one may be found by position under a different name.
+        task_values = tuple(param.example for param in skill.params if param.example)
 
         for number, stored in enumerate(skill.steps, start=1):
             step = fill_in(stored, params)
-            observation = self.look()
-            action, resolution = self._action_for(step, observation)
+            action, resolution, observation = self._find(step, task_values)
 
             if action is None:
                 detail = resolution.summary() if resolution else "the step named no action"
@@ -426,8 +442,42 @@ class SkillReplayer:
             skill=skill.name, steps=tuple(done), total=len(skill.steps), ok=False, detail=why
         )
 
+    def _find(
+        self, step: SkillStep, task_values: tuple[str, ...]
+    ) -> tuple[Action | None, Resolution | None, Observation]:
+        """Look at the page and resolve one step, looking again if it is not there yet.
+
+        A replay runs its steps back to back, far faster than the agent that
+        recorded them, which paused to think between clicks. A menu opened by
+        the previous click may not have finished appearing when the next step
+        looks for a link inside it. So when neither the name nor the text finds
+        the element, the replay waits a moment and looks again -- up to
+        :data:`RELOOKS` times -- before settling for a match by position, or
+        for nothing.
+
+        Args:
+            step: The step, with its values already filled in.
+            task_values: The values the skill was recorded with.
+
+        Returns:
+            tuple: The action (None if the element was not found), its
+            resolution (None for a step that names no element), and the
+            observation the action belongs to -- the latest look.
+        """
+        observation = self.look()
+        for attempt in range(RELOOKS + 1):
+            action, resolution = self._action_for(step, observation, task_values)
+            settled = resolution is None or (
+                resolution.element is not None and resolution.tier != TIER_STRUCTURAL
+            )
+            if settled or attempt == RELOOKS:
+                break
+            self._sleep(RELOOK_WAIT_S)
+            observation = self.look()
+        return action, resolution, observation
+
     def _action_for(
-        self, step: SkillStep, observation: Observation
+        self, step: SkillStep, observation: Observation, task_values: tuple[str, ...] = ()
     ) -> tuple[Action | None, Resolution | None]:
         """Turn one stored step into a concrete action against the page in front of it.
 
@@ -439,6 +489,9 @@ class SkillReplayer:
         Args:
             step: The step, with its values already filled in.
             observation: The page as it is now.
+            task_values: The values the skill was recorded with, so that a
+                stored name holding one may be found by position under a
+                different name (see :func:`~web_action_agent.selectors.resolve`).
 
         Returns:
             tuple: The action, or None when the element could not be found, and
@@ -453,7 +506,7 @@ class SkillReplayer:
         if isinstance(step, NavigateStep):
             return Navigate(action="navigate", url=step.url), None
 
-        resolution = resolve(step.selector, observation.elements)
+        resolution = resolve(step.selector, observation.elements, task_values=task_values)
         if resolution.element is None:
             return None, resolution
         if isinstance(step, FillStep):

@@ -35,6 +35,7 @@ import pytest
 from web_action_agent.observer import Box, Element, extract_elements
 from web_action_agent.selectors import (
     AMBIGUOUS,
+    CONTRADICTED,
     FOUND,
     NO_MATCH,
     NOT_DESCRIBED,
@@ -472,3 +473,81 @@ def test_a_resolution_is_recordable_for_a_trace() -> None:
     )
     assert record["tier"] == TIER_NAME
     assert record["attempts"][0]["tier"] == TIER_NAME
+
+
+# --- Counting may not overrule a name ------------------------------------------
+
+
+#: A menu link as an IRAS skill stored it, and the page a live replay saw: the
+#: menu not yet open, so the 23rd link on the page was LOGIN.
+MENU_LINK = Selector(
+    name="Tax residency and tax rates",
+    role="link",
+    text="Tax residency and tax rates",
+    structural="link[2]",
+)
+MENU_NOT_OPEN = (element(1, "link", "Taxes"), element(2, "link", "LOGIN"))
+
+
+@pytest.mark.unit
+def test_counting_refuses_an_element_whose_name_says_it_is_another() -> None:
+    resolution = resolve(MENU_LINK, MENU_NOT_OPEN)
+
+    assert resolution.found is False, "no click on LOGIN"
+    assert outcomes(resolution)[TIER_STRUCTURAL] == CONTRADICTED
+    assert (
+        "the element at link[2] is called 'LOGIN', not 'Tax residency and tax rates'"
+        in resolution.summary()
+    )
+
+
+@pytest.mark.unit
+def test_counting_may_find_a_result_whose_name_held_the_task_value() -> None:
+    # Recorded searching for "membership"; replayed for something else, the
+    # result in that place is rightly called something else.
+    stored_result = Selector(name="Membership application", role="link", structural="link[2]")
+    page = (element(1, "link", "Home"), element(2, "link", "Data and privacy notice"))
+
+    resolution = resolve(stored_result, page, task_values=("membership",))
+
+    assert named(resolution) == "Data and privacy notice"
+    assert resolution.tier == TIER_STRUCTURAL
+
+
+@pytest.mark.unit
+def test_without_the_task_value_the_same_result_is_refused() -> None:
+    stored_result = Selector(name="Membership application", role="link", structural="link[2]")
+    page = (element(1, "link", "Home"), element(2, "link", "Data and privacy notice"))
+
+    assert resolve(stored_result, page).found is False
+
+
+@pytest.mark.unit
+def test_counting_still_finds_an_element_with_no_name_of_its_own() -> None:
+    # An unlabelled icon: nothing to contradict, which is what counting is for.
+    icon = Selector(name="Close", role="button", structural="button[1]")
+    page = (element(1, "button", "", text=""),)
+
+    assert resolve(icon, page).found is True
+
+
+@pytest.mark.unit
+def test_an_inserted_link_no_longer_fools_a_selector_that_kept_its_name() -> None:
+    """The twin of the inserted-link test above, as real skills store selectors.
+
+    A selector written from a real element carries its name. With it, the link
+    that has slid into third place is seen to be a different one, and refused.
+    """
+    before = (element(1, "link", "Home"), element(2, "link", "Browse"), element(3, "link", "Help"))
+    after = (
+        element(1, "link", "New"),
+        *[element(i + 2, "link", e.name) for i, e in enumerate(before)],
+    )
+    help_link = Selector(name="Help", role="link", text="Help", structural="link[3]")
+
+    resolution = resolve(help_link, after)
+
+    assert named(resolution) == "Help", "found by name, at its new position"
+    # And where the name has gone too, counting will not claim "Browse".
+    renamed = (*after[:3], element(4, "link", "Support"))
+    assert resolve(help_link, renamed).found is False

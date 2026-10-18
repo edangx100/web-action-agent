@@ -39,6 +39,19 @@ what each tier tried. A site has been redesigned and the skill no longer fits
 it: that is ordinary, it is the reason skills get retired, and it needs to be
 reportable rather than thrown.
 
+**Counting may overrule a name only when the name was the task's own.** A
+skill that searched for "membership" stored the result it clicked as
+"Membership application"; replayed for "privacy", the result in that place is
+rightly called something else, and finding it by position is the point. But
+a name with nothing task-specific in it -- a menu link called "Tax residency
+and tax rates" -- does not change from one task to the next. If the element
+found by counting is called something else, that is not a weak match but a
+contradiction: the page has changed around the position, and the element
+there is a different one. It is refused, and says what it found instead.
+(Seen in a live replay: the IRAS menu link not yet on screen, and "the 23rd
+link" was LOGIN.) Which names were the task's own is told by the caller, as
+the values the skill was recorded with.
+
 **Resolution answers with a number, not a click.** What comes back is one of the
 elements from the current observation, which the caller turns into an ordinary
 ``click 4`` against *this* look at the page. So a replayed skill goes through
@@ -85,6 +98,13 @@ NOT_DESCRIBED = "not_described"
 #: The tier had a description and nothing on the page matched it. The ordinary
 #: shape of a site having changed.
 NO_MATCH = "no_match"
+
+#: The position tier found an element, but the element's own name or text says
+#: it is not the one described -- the "LOGIN" link standing where "Tax
+#: residency and tax rates" used to be. Refused rather than clicked: a wrong
+#: click is recorded as a success, which is the mistake this module exists to
+#: avoid.
+CONTRADICTED = "contradicted"
 
 #: The tier had a description and several elements matched it. Recorded
 #: distinctly from :data:`NO_MATCH` because it means something different and
@@ -232,7 +252,9 @@ class Resolution:
         }
 
 
-def resolve(selector: Selector, elements: tuple[Element, ...]) -> Resolution:
+def resolve(
+    selector: Selector, elements: tuple[Element, ...], *, task_values: tuple[str, ...] = ()
+) -> Resolution:
     """Find the element a stored selector describes, in a fresh look at a page.
 
     Each description is tried in :data:`TIERS` order and the first that matches
@@ -246,6 +268,11 @@ def resolve(selector: Selector, elements: tuple[Element, ...]) -> Resolution:
         elements: The elements of the current observation, in document order.
             Numbered for *this* look at the page, which is why the element
             itself is returned rather than any stored identifier.
+        task_values: The values the skill was recorded with -- its
+            parameters' examples, such as ``membership``. A stored name
+            containing one was specific to that task, so counting may find an
+            element called something else; a name containing none may not be
+            overruled that way.
 
     Returns:
         Resolution: The element and the tier that found it, or a resolution
@@ -260,6 +287,12 @@ def resolve(selector: Selector, elements: tuple[Element, ...]) -> Resolution:
             attempts.append(
                 Attempt(tier, NOT_DESCRIBED, detail=f"{tier}: the skill does not describe it")
             )
+            continue
+        contradiction = (
+            _contradicts(tier, selector, matches[0], task_values) if len(matches) == 1 else ""
+        )
+        if contradiction:
+            attempts.append(Attempt(tier, CONTRADICTED, matches=1, detail=contradiction))
             continue
         if len(matches) == 1:
             attempts.append(Attempt(tier, FOUND, matches=1, detail=f"{tier}: matched"))
@@ -363,6 +396,44 @@ def _matches_for(
             and normalise(element.text) == normalise(selector.text)
         ]
     return _by_position(selector, elements) if selector.structural else None
+
+
+def _contradicts(
+    tier: str, selector: Selector, element: Element, task_values: tuple[str, ...]
+) -> str:
+    """Say why an element found by counting is not the one described, if it is not.
+
+    Only the position tier can contradict itself: the other two match on the
+    name or text, so whatever they find agrees with it by definition.
+
+    Args:
+        tier: The tier that found the element.
+        selector: The stored descriptions.
+        element: The one element the tier found.
+        task_values: The values the skill was recorded with.
+
+    Returns:
+        str: Empty when there is no contradiction -- another tier, a stored
+        description with no name or text to compare, an element with none of
+        its own (an icon), or a stored name that held one of the task's own
+        values and so was expected to differ. Otherwise one sentence naming
+        both, for the trace.
+    """
+    if tier != TIER_STRUCTURAL:
+        return ""
+    wanted = {normalise(part) for part in (selector.name, selector.text) if part}
+    found = {normalise(part) for part in (element.name, element.text) if part}
+    if not wanted or not found or wanted & found:
+        return ""
+    values = [normalise(value) for value in task_values if value.strip()]
+    if any(value in name for value in values for name in wanted):
+        return ""
+    said = element.name or element.text
+    meant = selector.name or selector.text
+    return (
+        f"{tier}: the element at {selector.structural} is called {said!r}, not {meant!r}, "
+        "so it is a different element"
+    )
 
 
 def _by_name(selector: Selector, elements: tuple[Element, ...]) -> list[Element]:

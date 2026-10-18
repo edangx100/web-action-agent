@@ -31,12 +31,15 @@ from typing import Any
 
 import pytest
 
+from web_action_agent import replay
 from web_action_agent.actions import UseSkill, parse_action
 from web_action_agent.allowlist import Allowlist
 from web_action_agent.config import Config
 from web_action_agent.executor import TIMEOUT, Executor
-from web_action_agent.observation import capture
+from web_action_agent.observation import Observation, capture
+from web_action_agent.observer import Box, Element
 from web_action_agent.replay import Replay, ReplayError, SkillReplayer, fill_in
+from web_action_agent.selectors import TIER_NAME, TIER_STRUCTURAL
 from web_action_agent.skill_schema import ClickStep, Selector, Skill
 from web_action_agent.skill_store import SkillStore
 from web_action_agent.validator import Validator
@@ -571,3 +574,116 @@ def test_a_broken_replay_hands_back_the_page_it_actually_left(
     # And it is all in the trace, so the handover is a thing a reader looks up.
     record = report.steps[0].to_dict()["replay"]
     assert record["handover"] == 3 and record["completed"] == 2
+
+
+# --- Looking again before giving up ---------------------------------------------
+
+
+def a_page(*elements: Any, url: str = "https://www.iras.gov.sg/") -> Observation:
+    """Build an observation holding the given elements, for tests without a browser.
+
+    Args:
+        *elements: The page's elements.
+        url: Where the page is.
+
+    Returns:
+        Observation: The page.
+    """
+    return Observation(url=url, title="IRAS", elements=tuple(elements), text="")
+
+
+def a_link(number: int, name: str) -> Element:
+    """Build one link."""
+    return Element(
+        id=number, tag="a", role="link", name=name, text=name, box=Box(x=0, y=0, width=1, height=1)
+    )
+
+
+def a_patient_replayer(*looks: Observation) -> tuple[SkillReplayer, list[float]]:
+    """Build a replayer whose page changes from one look to the next.
+
+    Args:
+        *looks: What each successive look sees; the last repeats.
+
+    Returns:
+        tuple: The replayer, and the pauses it took.
+    """
+    waits: list[float] = []
+    replayer = SkillReplayer(
+        executor=None,
+        validator=None,
+        config=Config(),
+        sleep=waits.append,  # type: ignore[arg-type]
+    )
+    seen = list(looks)
+    replayer.look = lambda: seen.pop(0) if len(seen) > 1 else seen[0]  # type: ignore[method-assign]
+    return replayer, waits
+
+
+MENU_STEP = ClickStep(
+    action="click",
+    selector=Selector(
+        name="Tax residency and tax rates",
+        role="link",
+        text="Tax residency and tax rates",
+        structural="link[2]",
+    ),
+)
+
+
+@pytest.mark.unit
+def test_a_link_that_appears_a_moment_late_is_found_by_its_name(monkeypatch: Any) -> None:
+    monkeypatch.setattr(replay, "RELOOK_WAIT_S", 1.0)
+    menu_closed = a_page(a_link(1, "Taxes"), a_link(2, "LOGIN"))
+    menu_open = a_page(
+        a_link(1, "Taxes"), a_link(2, "LOGIN"), a_link(3, "Tax residency and tax rates")
+    )
+    # Any later look numbers the page afresh; the action must not belong to it.
+    renumbered = a_page(a_link(1, "Tax residency and tax rates"), a_link(2, "LOGIN"))
+    replayer, waits = a_patient_replayer(menu_closed, menu_open, renumbered)
+
+    action, resolution, observation = replayer._find(MENU_STEP, ())
+
+    assert action is not None and action.element_id == 3, "the menu link, not LOGIN"
+    assert resolution is not None and resolution.tier == TIER_NAME
+    assert observation is menu_open, "and the action belongs to the look it was found in"
+    assert waits == [1.0], "after one pause"
+
+
+@pytest.mark.unit
+def test_a_link_that_never_appears_is_given_up_on_after_the_extra_looks() -> None:
+    menu_closed = a_page(a_link(1, "Taxes"), a_link(2, "LOGIN"))
+    replayer, waits = a_patient_replayer(menu_closed)
+
+    action, resolution, _ = replayer._find(MENU_STEP, ())
+
+    assert action is None, "LOGIN is never clicked"
+    assert resolution is not None and resolution.found is False
+    assert len(waits) == replay.RELOOKS
+
+
+@pytest.mark.unit
+def test_a_link_found_at_once_costs_no_pause() -> None:
+    replayer, waits = a_patient_replayer(a_page(a_link(1, "Tax residency and tax rates")))
+
+    action, _, _ = replayer._find(MENU_STEP, ())
+
+    assert action is not None and waits == []
+
+
+@pytest.mark.unit
+def test_a_match_by_position_is_only_settled_for_after_looking_again() -> None:
+    # A search result recorded for "membership": by position is the right
+    # answer for another search, but only once its name has had time to show.
+    result = ClickStep(
+        action="click",
+        selector=Selector(name="Membership application", role="link", structural="link[2]"),
+    )
+    page = a_page(a_link(1, "Home"), a_link(2, "Data and privacy notice"))
+    replayer, waits = a_patient_replayer(page)
+
+    action, resolution, _ = replayer._find(result, ("membership",))
+
+    assert action is not None and action.element_id == 2
+    assert resolution is not None and resolution.tier == TIER_STRUCTURAL
+    assert len(waits) == replay.RELOOKS
