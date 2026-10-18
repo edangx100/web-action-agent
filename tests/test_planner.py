@@ -29,6 +29,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from test_model_client import without_vision_schemas
 
 from web_action_agent.model_client import ModelClient, load_profile
 from web_action_agent.observation import Observation
@@ -238,9 +239,11 @@ def test_the_trace_records_whether_decoding_was_actually_constrained() -> None:
     assert constrained.record is not None
     assert constrained.record.schema_enforced is True
 
-    # The shipped vision route cannot honour a schema, so a step carrying a
-    # screenshot is decoded unconstrained and says so.
-    unconstrained = planner_for().decide(
+    # A vision route that cannot honour a schema (made up: every shipped route
+    # can), so a step carrying a screenshot is decoded unconstrained and says so.
+    profile = without_vision_schemas(load_profile(CONSTRAINED_PROFILE))
+    client = ModelClient(profile, transport=StubTransport(), env={})
+    unconstrained = Planner(client).decide(
         task="t", observation=an_observation(), screenshot_png=A_PNG
     )
     assert unconstrained.record is not None

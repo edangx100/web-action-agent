@@ -379,9 +379,10 @@ def test_the_default_planner_route_has_a_price() -> None:
 
 @pytest.mark.unit
 def test_unpriced_routes_are_listed() -> None:
-    missing = unpriced_routes([load_profile("openrouter"), load_profile("openrouter-judge")])
-    # The free vision tier is deliberately left unpriced; everything else has one.
-    assert missing == ["openrouter -> nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"]
+    # Every route a published sweep uses has a price: planner text, planner
+    # vision, and judge. A free route could not be counted against the ceiling.
+    assert unpriced_routes([load_profile("openrouter"), load_profile("openrouter-judge")]) == []
+    # The first-party profile's prices are not recorded, and it says so.
     assert len(unpriced_routes([load_profile("nvidia")])) == 2
 
 

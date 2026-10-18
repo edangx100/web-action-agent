@@ -1,13 +1,11 @@
 id: singstat-total-population
 site: singstat
-difficulty: multi_page_navigation
+difficulty: single_page_search
 start_url: https://www.singstat.gov.sg/
 instruction: >-
   Starting from the Department of Statistics home page, find Singapore's
   latest total population figure. Report the figure and the year it refers to.
 verdicts:
-  - method: url_contains
-    value: population
   - method: judge
     expected_outcome: >-
       The answer gives Singapore's total population as shown on the final
@@ -16,4 +14,8 @@ verdicts:
       newer figure shown on the page is also correct.
 notes: >-
   Published once a year, so a fixed expected answer would go stale. The judge
-  compares the answer with the final screenshot instead.
+  compares the answer with the final screenshot instead. There is no address
+  check: the home page shows the figure itself, so a correct answer can come
+  without leaving it (seen in a live rehearsal on 2026-10-18, when an address
+  check failed a correct answer). For the same reason it counts as a
+  single-page search.

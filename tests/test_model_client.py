@@ -114,6 +114,21 @@ class StubTransport:
         self.closed = True
 
 
+def without_vision_schemas(profile: Profile) -> Profile:
+    """Copy a profile, with its vision route unable to honour a JSON schema.
+
+    Args:
+        profile: A profile with a vision route.
+
+    Returns:
+        Profile: The same profile, but the vision route says it has no schema
+        support -- as a free or older endpoint might.
+    """
+    assert profile.vision is not None
+    vision = profile.vision.model_copy(update={"supports_json_schema": False})
+    return profile.model_copy(update={"vision": vision})
+
+
 def client_for(
     profile: Profile,
     *,
@@ -412,12 +427,13 @@ def test_schema_request_constrains_decoding_where_the_route_supports_it() -> Non
 def test_schema_omitted_where_the_route_cannot_honour_it() -> None:
     """A route without schema support is not sent a parameter it will reject.
 
-    The shipped vision route is exactly this case. Sending the parameter anyway
-    would fail the call outright; omitting it leaves the validator's schema
-    check and bounded retry as the safety net, which is the design.
+    Every shipped route supports schemas today, so the case is made up here: a
+    vision route without that support. Sending the parameter anyway would fail
+    the call outright; omitting it leaves the validator's schema check and
+    bounded retry as the safety net, which is the design.
     """
     transport = StubTransport()
-    client = client_for(load_profile("openrouter"), transport=transport)
+    client = client_for(without_vision_schemas(load_profile("openrouter")), transport=transport)
 
     client.complete([user_message("what now?", screenshot_png=A_PNG)], schema=ACTION_SCHEMA)
 

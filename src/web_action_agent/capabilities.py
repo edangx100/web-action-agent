@@ -8,7 +8,7 @@ before it does anything else::
 
     capabilities:
       [ok] agent    profile 'openrouter' -> nvidia/nemotron-3-nano-30b-a3b
-      [ok] vision   screenshots go to nvidia/nemotron-3-nano-omni-30b-a3b
+      [ok] vision   screenshots go to nvidia/nemotron-3.5-super-vl
       [--] judge    no judge endpoint configured
 
 Three things are worth noticing about that.

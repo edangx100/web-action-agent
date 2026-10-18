@@ -30,9 +30,11 @@
 #                          the model for JSON in the prompt and the validator's
 #                          schema check plus bounded retry is the safety net.
 #
-# Model choice: the planner is the Nemotron 3 Nano family throughout — a small
+# Model choice: the planner is Nemotron 3 Nano throughout — a small
 # open-weight model, so the local profile serves the same weights as the hosted
-# ones. Its vision-language sibling handles observations carrying a screenshot.
+# ones. Observations carrying a screenshot go to a vision-language model: on
+# the first-party profile, Nano's own Omni sibling; on OpenRouter, Nemotron 3.5
+# Super VL, because there Omni is offered only on an unreliable free tier.
 
 openrouter:
   # Primary development path: one key, many models, easy comparison sweeps.
@@ -51,12 +53,16 @@ openrouter:
     provider_order: [Nebius]
     supports_json_schema: true
   vision:
-    # The vision sibling is routed only as a free endpoint here, and that
-    # endpoint does not advertise response_format — hence the flag below, and
-    # hence the validator's retry loop mattering most on screenshot steps.
-    model: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
-    provider_order: [Nvidia]
-    supports_json_schema: false
+    # Not Nano's Omni sibling: on OpenRouter that is offered only as a free
+    # endpoint (the paid listing has no host), and a live rehearsal showed why
+    # that will not do for published results -- empty replies under load, no
+    # schema support so its actions were often malformed, and no price, so
+    # its calls could not be counted. Super VL is the paid NVIDIA vision model
+    # with hosts that support structured_outputs; DeepInfra is pinned for its
+    # uptime. (Checked 2026-10-18 in OpenRouter's endpoint list.)
+    model: nvidia/nemotron-3.5-super-vl
+    provider_order: [DeepInfra]
+    supports_json_schema: true
 
 nvidia:
   # First-party fallback: fewer models, but one vendor, no routing layer, and

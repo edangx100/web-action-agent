@@ -44,11 +44,11 @@ openrouter:
     checked: "2026-10-18"
     note: planner text route; the pinned Nebius host, from OpenRouter's endpoint list
 
-  nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free:
-    input_usd_per_mtok:
-    output_usd_per_mtok:
-    checked:
-    note: free tier — no price to record, and zero would be a claim
+  nvidia/nemotron-3.5-super-vl:
+    input_usd_per_mtok: 0.10
+    output_usd_per_mtok: 0.40
+    checked: "2026-10-18"
+    note: planner vision route; the pinned DeepInfra host, from OpenRouter's endpoint list
 
 openrouter-judge:
   # The evaluation judge. Price of the pinned Google AI Studio host, as listed

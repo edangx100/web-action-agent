@@ -155,7 +155,7 @@ it found actually enable:
 ```
 capabilities:
   [ok] agent    profile 'openrouter' -> nvidia/nemotron-3-nano-30b-a3b
-  [ok] vision   screenshots go to nvidia/nemotron-3-nano-omni-30b-a3b
+  [ok] vision   screenshots go to nvidia/nemotron-3.5-super-vl
   [--] judge    no judge endpoint: set WAA_JUDGE_PROFILE, ...
 ```
 
