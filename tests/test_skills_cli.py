@@ -335,6 +335,29 @@ def test_a_candidate_is_checked_against_a_live_page_before_it_is_stored(
 
 
 @pytest.mark.fixture
+def test_what_induction_corrected_is_said_on_screen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, playwright: Any, fixture_site: Any
+) -> None:
+    """A parameter dropped from a candidate is reported, never silently lost."""
+    invented = {
+        **AN_INDUCTION,
+        "parameters": [
+            *AN_INDUCTION["parameters"],
+            {"name": "branch", "value": "Hollow Lane", "description": "x", "required": False},
+        ],
+    }
+    endpoint = ScriptedEndpoint(invented)
+    runs = a_workspace(monkeypatch, tmp_path, playwright, endpoint)
+    folder = put_run(runs, "first")
+    _point_at(folder, fixture_site)
+    monkeypatch.setattr(cli, "resolve_env", dict)
+
+    result = invoke(["induce", str(folder)])
+
+    assert "first: note: proposed parameter 'branch' ('Hollow Lane') was dropped" in result.output
+
+
+@pytest.mark.fixture
 def test_a_candidate_that_fails_its_check_is_discarded_with_a_reason(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, playwright: Any, fixture_site: Any
 ) -> None:

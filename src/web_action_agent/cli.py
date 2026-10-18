@@ -365,7 +365,8 @@ def _induce_from(
             try:
                 # The result wraps the candidate with what the call cost and
                 # what was left out of the route; the skill is one field of it.
-                candidate = inducer.induce(run).skill
+                induction = inducer.induce(run)
+                candidate = induction.skill
             except InductionError as error:
                 # Not an error in the ordinary sense: most run folders are not
                 # eligible, because most runs fail, and only successful ones
@@ -379,6 +380,10 @@ def _induce_from(
                 continue
 
             induced += 1
+            # What was left out -- failed steps, parameters no step could use
+            # -- is said, so a corrected candidate is never a silent one.
+            for note in induction.notes:
+                typer.echo(f"  {_name(folder)}: note: {note}", err=True)
             verdict = _check(config, browser, candidate, run.start_url, judge)
             if verdict is None:
                 continue

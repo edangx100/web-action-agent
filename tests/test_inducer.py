@@ -27,6 +27,7 @@ earlier step doomed it. A recipe made from a failure is a recipe for failing.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -360,12 +361,14 @@ def test_a_reply_that_is_not_a_skill_description_is_refused() -> None:
 
 
 @pytest.mark.mock_llm
-def test_a_parameter_for_a_value_not_in_the_run_is_caught() -> None:
-    """The likeliest model mistake, and it fails loudly rather than quietly.
+def test_a_parameter_for_a_value_not_in_the_run_is_dropped_and_said() -> None:
+    """The likeliest model mistake, and it is corrected out loud, not quietly.
 
-    Naming a blank for a value that was never typed leaves a declared parameter
-    no step uses — which the skill format refuses, because the planner reads
-    that list to decide whether it can supply what the skill needs.
+    Naming a blank for a value that was never typed leaves a parameter no step
+    uses. Kept, it would make the skill claim to need something it never uses
+    -- the planner reads that list to decide whether it can supply what the
+    skill needs. So it is dropped, with its verification value, and the notes
+    say which and why.
     """
     inducer, _ = an_inducer(
         {
@@ -389,8 +392,11 @@ def test_a_parameter_for_a_value_not_in_the_run_is_caught() -> None:
         }
     )
 
-    with pytest.raises(ValidationError, match="branch"):
-        inducer.induce(the_run())
+    induction = inducer.induce(the_run())
+
+    assert [p.name for p in induction.skill.params] == ["query"]
+    assert induction.skill.verification.params == {"query": "privacy"}
+    assert any("'branch'" in note and "'Hollow Lane'" in note for note in induction.notes)
 
 
 @pytest.mark.mock_llm
@@ -438,11 +444,59 @@ def test_a_parameter_whose_value_contains_another_is_replaced_whole() -> None:
         }
     )
 
-    # `letter` is never used once `query` has taken the whole field, so the
-    # format refuses it — which is the right outcome, and proves the longer
-    # value won.
-    with pytest.raises(ValidationError, match="letter"):
-        inducer.induce(the_run())
+    # `letter` is never used once `query` has taken the whole field, so it is
+    # dropped -- which proves the longer value won: had `member` been
+    # replaced first, the field would read `{letter}ship`.
+    induction = inducer.induce(the_run())
+
+    assert [p.name for p in induction.skill.params] == ["query"]
+    assert any("'letter'" in note for note in induction.notes)
+    assert "{letter}" not in json.dumps(induction.skill.to_dict())
+
+
+@pytest.mark.mock_llm
+def test_a_run_that_only_clicked_makes_a_skill_with_no_parameters() -> None:
+    """As in a live rehearsal: a one-click run, and a model that invents inputs.
+
+    The run typed nothing, so nothing in it is task-specific. The model read
+    facts off the page anyway and proposed them as parameters -- an age group
+    and a wage threshold, in the run that found this. None can be used, so the
+    candidate keeps the route and no parameters, and is still a valid skill.
+    """
+    run = the_run()
+    # Keep only the click and the finish: no typing anywhere in the run.
+    clicked = dataclasses.replace(
+        run,
+        steps=tuple(
+            s for s in run.steps if s.action is not None and s.action.action in {"click", "done"}
+        ),
+    )
+    inducer, _ = an_inducer(
+        {
+            "name": "open_membership_record",
+            "description": "open the membership record",
+            "parameters": [
+                {
+                    "name": "age_group",
+                    "value": "55 and below",
+                    "description": "x",
+                    "required": True,
+                },
+                {"name": "wage_threshold", "value": "$750", "description": "y", "required": False},
+            ],
+            "verification": {
+                "params": [{"name": "age_group", "value": "above 55 to 60"}],
+                "expected_outcome": "the membership record opens",
+            },
+        }
+    )
+
+    induction = inducer.induce(clicked)
+
+    assert induction.skill.params == ()
+    assert [step.action for step in induction.skill.steps] == ["click"]
+    assert induction.skill.verification.params == {}
+    assert len([n for n in induction.notes if "was dropped" in n]) == 2
 
 
 # --- Runs that may not be learnt from ---------------------------------------

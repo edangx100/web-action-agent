@@ -251,10 +251,11 @@ class Inducer:
                 recording, or names an element its own observation does not
                 have.
             pydantic.ValidationError: If the model's answer does not make a
-                valid skill -- a parameter that no step uses, a verification
-                block missing a value. Raised from the skill format rather
-                than caught here, because those are the format's rules and it
-                says exactly which one was broken.
+                valid skill -- a verification block missing a value, say.
+                Raised from the skill format rather than caught here, because
+                those are the format's rules and it says exactly which one was
+                broken. (A proposed parameter no step uses is not one of
+                these: it is dropped, with a note.)
             ModelClientError: If the call itself failed. A broken endpoint is
                 not a bad run, and is not this component's to retry.
         """
@@ -266,8 +267,8 @@ class Inducer:
             )
 
         answer, record = self._ask(run, usable)
-        skill = self._assemble(run, usable, answer)
-        return Induction(skill=skill, record=record, notes=notes)
+        skill, dropped = self._assemble(run, usable, answer)
+        return Induction(skill=skill, record=record, notes=(*notes, *dropped))
 
     def _refuse_ineligible(self, run: ReplayedRun) -> None:
         """Refuse a run that has no business becoming a skill.
@@ -418,7 +419,9 @@ class Inducer:
             answer: The model's reply.
 
         Returns:
-            Skill: The candidate, valid by construction.
+            tuple[Skill, tuple[str, ...]]: The candidate, valid by construction,
+            and a note for each parameter the model proposed that no step
+            could use.
 
         Raises:
             InductionError: If a step names an element its own observation does
@@ -426,39 +429,60 @@ class Inducer:
             pydantic.ValidationError: If the model's judgment does not make a
                 valid skill.
         """
-        params = [
+        proposed = answer.get("parameters", [])
+        # Longest first, so that a parameter whose value contains another's --
+        # "reading room" and "reading" -- does not get half-replaced by the
+        # shorter one and leave a placeholder inside a literal.
+        blanks = sorted(
+            ((item["value"], item["name"]) for item in proposed),
+            key=lambda pair: len(pair[0]),
+            reverse=True,
+        )
+        steps = tuple(self._step_for(action, observation, blanks) for action, observation in usable)
+
+        # Bookkeeping, not judgment: a parameter is a value the run typed or
+        # visited, replaced by a blank. One whose value appears in no step left
+        # no blank, so no step can use it -- typically a fact the model read
+        # off the page, such as an age group, on a run that only clicked. Kept,
+        # it would make the skill claim to need something it never uses, which
+        # the skill format rightly refuses. So it is dropped, here and from the
+        # verification values, and the notes say so.
+        used = {name for step in steps for name in step.parameters_used()}
+        kept = [item for item in proposed if item["name"] in used]
+        dropped = tuple(
+            f"proposed parameter {item['name']!r} ({item['value']!r}) was dropped: "
+            "the run never typed or visited that value, so no step could use it"
+            for item in proposed
+            if item["name"] not in used
+        )
+        params = tuple(
             Parameter(
                 name=item["name"],
                 description=item.get("description", ""),
                 required=item.get("required", True),
                 example=item["value"],
             )
-            for item in answer.get("parameters", [])
-        ]
-        # Longest first, so that a parameter whose value contains another's --
-        # "reading room" and "reading" -- does not get half-replaced by the
-        # shorter one and leave a placeholder inside a literal.
-        blanks = sorted(
-            ((item["value"], item["name"]) for item in answer.get("parameters", [])),
-            key=lambda pair: len(pair[0]),
-            reverse=True,
+            for item in kept
         )
-
-        steps = tuple(self._step_for(action, observation, blanks) for action, observation in usable)
         verification = Verification(
-            params={item["name"]: item["value"] for item in answer["verification"]["params"]},
+            params={
+                item["name"]: item["value"]
+                for item in answer["verification"]["params"]
+                if item["name"] in used
+            },
             expected_outcome=answer["verification"]["expected_outcome"],
         )
-        return Skill(
+        skill = Skill(
             name=answer["name"],
             description=answer["description"],
             domain=derive_domain(host_of(run.start_url)),
-            params=tuple(params),
+            params=params,
             steps=steps,
             verification=verification,
             induced_from=run.run_id,
             created_at=utc_now(),
         )
+        return skill, dropped
 
     def _step_for(
         self, action: Any, observation: Observation, blanks: list[tuple[str, str]]
