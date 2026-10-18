@@ -4,13 +4,16 @@ pytest loads this file automatically, so anything defined here is available to
 every test module by name, without an import.
 """
 
+import os
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fixtures.site_server import StaticSite
 from marker_policy import policy_violations, violation_report
 from playwright.sync_api import Page, Playwright, sync_playwright
 
+from web_action_agent import config
 from web_action_agent.browser import BrowserProcess, BrowserSettings, TaskSession
 
 VIEWPORT = {"width": 1280, "height": 800}
@@ -34,6 +37,26 @@ it, so a test page is opened exactly the way a task's page is: one process for
 the session, one fresh context per test. Anything that broke isolation for a
 run would break it here too, in front of every browser test at once.
 """
+
+
+@pytest.fixture(autouse=True)
+def _no_local_secrets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keep every test away from this machine's own ``.env`` and ``WAA_`` variables.
+
+    A developer's ``.env`` holds their keys and choices -- a judge profile,
+    a different planner -- and a test that read it would pass on one machine
+    and fail on the next, or behave differently once keys are added. So each
+    test sees no ``.env`` file and no ``WAA_`` variable unless it supplies its
+    own. A test that needs the real keys (a ``live`` one) reads the project's
+    ``.env`` by its path, which this leaves alone.
+
+    Args:
+        monkeypatch: Undoes both changes when the test ends.
+        tmp_path: Where the absent ``.env`` would be.
+    """
+    monkeypatch.setattr(config, "DEFAULT_DOTENV_PATH", tmp_path / "absent.env")
+    for name in [n for n in os.environ if n.startswith("WAA_")]:
+        monkeypatch.delenv(name)
 
 
 @pytest.hookimpl(tryfirst=True)

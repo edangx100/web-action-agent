@@ -46,6 +46,7 @@ from typer.testing import CliRunner
 from web_action_agent import cli
 from web_action_agent.benchmark import Judge as JudgeMethod
 from web_action_agent.benchmark import Suite, load_suite
+from web_action_agent.budget import PREFLIGHT_LOG, read_calls
 from web_action_agent.config import Config
 from web_action_agent.eval_harness import (
     CRASHED,
@@ -234,7 +235,10 @@ def test_a_suite_completes_under_four_workers_with_a_folder_per_trial(
         assert (folder / OUTCOME_FILE).exists(), f"{result.trial.name} left a complete run"
         assert (folder / VERDICT_FILE).exists(), f"{result.trial.name} was marked"
         assert result.verdict is not None and result.verdict.status == PASS, result
-    assert endpoint.calls == 10, "one model call per trial: each run did its task once"
+    # One connection test before the sweep (the local profile has a text
+    # route only), then one call per trial: each run did its task once.
+    assert endpoint.calls == 1 + 10
+    assert len(read_calls(harness.folder / PREFLIGHT_LOG)) == 1, "and the test call is counted"
 
 
 @pytest.mark.fixture

@@ -54,6 +54,7 @@ that distinction is worth the awkwardness.
 from __future__ import annotations
 
 import base64
+import io
 import json
 import random
 import time
@@ -65,6 +66,7 @@ from typing import Any, Self
 
 import yaml
 from openai import APITimeoutError, OpenAI
+from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from web_action_agent.actions import Done
@@ -873,6 +875,31 @@ def user_message(
     return {"role": "user", "content": content}
 
 
+#: The answer a preflight call asks for: as small as a schema can usefully be,
+#: and strict, as the agent's own schemas are.
+PREFLIGHT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"ok": {"type": "boolean"}},
+    "required": ["ok"],
+    "additionalProperties": False,
+}
+
+
+def _preflight_image() -> bytes:
+    """Make the small plain picture a preflight call sends on the screenshot route.
+
+    64 by 64 pixels rather than one: some hosts refuse images below a minimum
+    size, and a test that failed for that reason would stop a sweep that
+    would have run fine.
+
+    Returns:
+        bytes: A white PNG image.
+    """
+    buffer = io.BytesIO()
+    Image.new("RGB", (64, 64), "white").save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def has_image(messages: Sequence[Mapping[str, Any]]) -> bool:
     """Report whether any message carries an image part.
 
@@ -1358,6 +1385,55 @@ class ModelClient:
         usage = getattr(completion, "usage", None)
         value = getattr(usage, field, None) if usage is not None else None
         return int(value) if isinstance(value, int) else None
+
+    def preflight(self) -> tuple[CallRecord, ...]:
+        """Make one tiny call on each route a run may use, to prove it answers.
+
+        A benchmark sweep runs dozens of trials. If the endpoint refuses every
+        call -- a host that no longer supports a setting the request needs, a
+        model that was withdrawn, a key with no credit -- every trial would
+        fail the same way, one after another. One small call first finds that
+        out in a second, before anything else has been spent.
+
+        Each call is built exactly as the agent's own are: the same route,
+        host pin, seed, and a JSON schema, so a request setting the host
+        cannot serve fails here rather than in the first trial.
+
+        Returns:
+            tuple[CallRecord, ...]: The cost record of each call, to be counted
+            with the sweep's spend.
+
+        Raises:
+            ModelClientError: If a route did not answer, naming the route. A
+                reply that answered but was not the JSON asked for does not
+                raise: the route works, and replies like that are what the
+                agent's own retry is for.
+        """
+        records: list[CallRecord] = []
+        # The text route always; the screenshot route too, where the profile
+        # has one, since any step carrying a screenshot goes there.
+        for vision in (False, True) if self.supports_vision else (False,):
+            message = user_message(
+                'This is a connection test. Reply with the JSON object {"ok": true}.',
+                screenshot_png=_preflight_image() if vision else None,
+            )
+            try:
+                response = self.complete(
+                    [message], schema=PREFLIGHT_SCHEMA, schema_name="connection_test"
+                )
+            except ModelResponseError as error:
+                if error.record is not None:
+                    records.append(error.record)
+                continue
+            except ModelClientError as error:
+                route = self.profile.route_for(vision=vision)
+                kind = "screenshot" if vision else "text"
+                raise ModelClientError(
+                    f"profile {self.profile.name!r}: the {kind} route ({route.model}) did not "
+                    f"answer a test call, so no trial was started: {error}"
+                ) from error
+            records.append(response.record)
+        return tuple(records)
 
     def close(self) -> None:
         """Close the underlying HTTP connections, if the transport has any."""

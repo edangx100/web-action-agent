@@ -44,6 +44,11 @@ in each worker's memory.
 * a finished run with no mark yet -- mark it, without running it again;
 * a finished, marked run -- skip it.
 
+* a run that ended because the AI service failed -- a call refused, the
+  service down, too many requests -- is not a result at all: the folder is
+  moved to ``_service_errors/`` (kept as evidence, never counted, never
+  judged) and the trial is run again from the start.
+
 So a sweep that dies halfway is restarted with the same command, and it does
 exactly the trials that are left. A trial that *failed* is not run again: a
 failure is a result, and retrying failures until they pass would be cheating.
@@ -53,6 +58,16 @@ folder once, when the sweep starts (an empty one for a cold sweep), and each
 trial works on its *own* copy of that. A trial that replays a skill writes
 its tally into its own copy, so no trial can change what the next one is
 offered, and the real library is never touched by a benchmark.
+
+**AI-service errors are not results.** A run the AI service never let
+start -- every call refused -- says nothing about the agent, and counting it
+as a fail would make an outage look like a bad agent. So such a trial is set
+aside and run again, as above. Two guards keep an outage from costing a whole
+sweep: before any trial starts, one tiny connection-test call is made on each
+route the agent may use (see
+:meth:`~web_action_agent.model_client.ModelClient.preflight`), and once
+:data:`SERVICE_ERROR_STREAK` trials in a row hit a service error, the sweep
+stops.
 
 **The right library, or no sweep.** The cold-versus-warm comparison is only
 a comparison if the cold arm really had no skills and the warm arm really had
@@ -90,11 +105,18 @@ from .allowlist import derive_domain, host_of
 from .benchmark import BenchmarkTask, Suite
 from .benchmark import Judge as JudgeMethod
 from .browser import BrowserProcess, BrowserSettings
-from .budget import Budget, record_judge_call
+from .budget import PREFLIGHT_LOG, Budget, record_judge_call
 from .checkers import CheckResult, final_state, run_checks
 from .config import Config
 from .judge import FAIL, FAILURE_CATEGORIES, JUDGING_ERROR, PASS, Judge, JudgeVerdict
-from .model_client import ModelClient, ModelClientError, resolve_profile
+from .model_client import (
+    ENDPOINT_UNAVAILABLE,
+    MODEL_ERROR,
+    RATE_LIMITED,
+    ModelClient,
+    ModelClientError,
+    resolve_profile,
+)
 from .skill_store import SkillStore, SkillStoreError
 from .trace import OUTCOME_FILE, TraceError
 from .trace_reader import TraceReadError, read_run
@@ -107,6 +129,18 @@ VERDICT_FILE = "verdict.json"
 
 #: Where the folders of killed runs are moved, inside the sweep folder.
 INTERRUPTED_DIR = "_interrupted"
+
+#: Where runs stopped by an AI-service error are moved, kept but never counted.
+SERVICE_ERROR_DIR = "_service_errors"
+
+#: How a run ends when the AI service, not the agent, was the problem: a call
+#: refused or failed, the service unavailable, or too many requests. A run
+#: ending in one of these is run again rather than marked.
+SERVICE_ERROR_OUTCOMES = (MODEL_ERROR, RATE_LIMITED, ENDPOINT_UNAVAILABLE)
+
+#: Trials in a row stopped by an AI-service error before the sweep gives up:
+#: by then the service is down, and carrying on would only repeat it.
+SERVICE_ERROR_STREAK = 3
 
 #: Where the sweep's starting copy of the skill library lives.
 LIBRARY_DIR = "library"
@@ -122,6 +156,7 @@ NEW = "new"
 INTERRUPTED = "interrupted"
 UNMARKED = "unmarked"
 DONE = "done"
+SERVICE_FAILED = "service_failed"
 
 #: What happened to a trial in this invocation of the harness.
 RAN = "ran"
@@ -129,6 +164,7 @@ SKIPPED = "skipped"
 REMARKED = "remarked"
 SETUP_ERROR = "setup_error"
 CRASHED = "crashed"
+SERVICE_ERROR = "service_error"
 
 #: How a trial was marked. ``needs_judge`` means the task can only be marked
 #: by the judge and none is configured: the run is kept, and a later restart
@@ -194,6 +230,24 @@ def plan_trials(suite: Suite, trials: int) -> tuple[Trial, ...]:
     return tuple(Trial(task, n) for n in range(1, trials + 1) for task in suite.tasks)
 
 
+def run_ended_by_service(folder: Path) -> bool:
+    """Say whether a finished run ended because the AI service failed.
+
+    Args:
+        folder: A run folder holding its outcome file.
+
+    Returns:
+        bool: True if the run's ending is one of
+        :data:`SERVICE_ERROR_OUTCOMES`. False if it ended any other way, or
+        the outcome cannot be read.
+    """
+    try:
+        outcome = json.loads((folder / OUTCOME_FILE).read_text(encoding="utf-8"))
+        return outcome["outcome"]["category"] in SERVICE_ERROR_OUTCOMES
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return False
+
+
 def trial_state(folder: Path) -> str:
     """Read a trial's state from its folder.
 
@@ -201,7 +255,8 @@ def trial_state(folder: Path) -> str:
         folder: The trial's run folder.
 
     Returns:
-        str: :data:`NEW`, :data:`INTERRUPTED`, :data:`UNMARKED`, or
+        str: :data:`NEW`, :data:`INTERRUPTED`, :data:`SERVICE_FAILED` (the
+        run ended in an AI-service error), :data:`UNMARKED`, or
         :data:`DONE`. A folder whose mark is a judging error, which still
         needs a judge, or which is a fail with no category yet, counts as
         unmarked, so a restart tries to finish the mark without running the
@@ -211,6 +266,10 @@ def trial_state(folder: Path) -> str:
         return NEW
     if not (folder / OUTCOME_FILE).exists():
         return INTERRUPTED
+    # Checked before the mark: a run the AI service stopped is run again even
+    # if it was marked, as runs were before this rule existed.
+    if run_ended_by_service(folder):
+        return SERVICE_FAILED
     verdict_path = folder / VERDICT_FILE
     if not verdict_path.exists():
         return UNMARKED
@@ -575,7 +634,8 @@ class SweepReport:
         results: One entry per trial that was looked at, in plan order.
             Trials never started -- because a ceiling was reached first --
             have no entry.
-        moved_aside: Folders of killed runs moved to ``_interrupted/``.
+        moved_aside: Folders of killed runs moved to ``_interrupted/``, and of
+            runs stopped by an AI-service error moved to ``_service_errors/``.
         not_started: Trials left for a later run, because the sweep stopped
             before reaching them.
         stopped_by: Why the sweep stopped early, or empty if it did not.
@@ -610,6 +670,7 @@ class SweepReport:
             (REMARKED, "marked again"),
             (SETUP_ERROR, "could not start"),
             (CRASHED, "crashed"),
+            (SERVICE_ERROR, "stopped by an AI-service error (not counted; run again)"),
         ):
             if self.count(action):
                 parts.append(f"{self.count(action)} {label}")
@@ -719,6 +780,8 @@ class Harness:
         self._stop = threading.Event()
         self._results: dict[str, TrialResult] = {}
         self._stopped_by = ""
+        self._service_streak = 0
+        self._client: Any = None
 
     # --- Preparing ---
 
@@ -771,7 +834,7 @@ class Harness:
         # Built once before any worker starts, so a missing key stops the
         # sweep here instead of failing every trial in turn.
         try:
-            self._client_factory(self.config)
+            client = self._client_factory(self.config)
         except ModelClientError as error:
             raise HarnessError(str(error)) from error
 
@@ -789,6 +852,9 @@ class Harness:
                 )
         else:
             spec_path.write_text(json.dumps(asdict(spec), indent=2) + "\n", encoding="utf-8")
+        # Kept for the connection test, which waits until it is known that a
+        # trial will actually run.
+        self._client = client
 
         library = self.folder / LIBRARY_DIR
         if not library.exists():
@@ -825,8 +891,18 @@ class Harness:
             elif state == INTERRUPTED:
                 moved.append(self._move_aside(trial, folder))
                 to_run.append(trial)
+            elif state == SERVICE_FAILED:
+                moved.append(self._move_aside(trial, folder, SERVICE_ERROR_DIR))
+                to_run.append(trial)
             else:
                 to_run.append(trial)
+
+        # One tiny call per route before the first trial, for the same reason
+        # the client is built early: a host that refuses the request is found
+        # now, not twelve trials from now. Only when something will run: a
+        # finished sweep, run again to rewrite its tables, spends nothing.
+        if to_run:
+            self._preflight()
 
         done = len(plan) - len(to_run) - len(to_mark)
         self._log(
@@ -834,7 +910,10 @@ class Harness:
             + (f", {len(to_mark)} to mark" if to_mark else "")
         )
         if moved:
-            self._log(f"sweep: {len(moved)} interrupted run(s) moved to {INTERRUPTED_DIR}/")
+            self._log(
+                f"sweep: {len(moved)} run(s) set aside to run again "
+                f"(killed: {INTERRUPTED_DIR}/; AI-service error: {SERVICE_ERROR_DIR}/)"
+            )
         self._log(f"sweep: spent so far {self._budget.spend().summary()}")
 
         # Marking may call the judge, which costs money too, so it waits on
@@ -882,6 +961,27 @@ class Harness:
             stopped_by=self._stopped_by,
         )
 
+    def _preflight(self) -> None:
+        """Make the client's connection-test calls, and log what they cost.
+
+        A stand-in client with no ``preflight`` method, as tests use, is not
+        checked.
+
+        Raises:
+            HarnessError: If a route did not answer. No trial has run.
+        """
+        preflight = getattr(self._client, "preflight", None)
+        if not callable(preflight):
+            return
+        try:
+            tested = preflight()
+        except ModelClientError as error:
+            raise HarnessError(str(error)) from error
+        # Paid for, so counted against the ceiling like every other call.
+        for record in tested:
+            record_judge_call(self.folder, record, log=PREFLIGHT_LOG)
+        self._log(f"sweep: connection test passed on {len(tested)} route(s)")
+
     def _over_budget(self) -> bool:
         """Check the ceilings, and stop the sweep the first time one is reached.
 
@@ -911,8 +1011,29 @@ class Harness:
                     # Saved after every trial, so a sweep killed without
                     # warning loses at most one trial's time from its total.
                     self._budget.save()
+                    self._count_service_errors(result)
                 mark = result.verdict.status if result.verdict else result.action
                 self._log(f"{threading.current_thread().name}: {trial.name} -> {mark}")
+
+    def _count_service_errors(self, result: TrialResult) -> None:
+        """Keep count of AI-service errors in a row, and stop the sweep at the limit.
+
+        Called with the condition's lock held.
+
+        Args:
+            result: The trial that just finished.
+        """
+        if result.action != SERVICE_ERROR:
+            self._service_streak = 0
+            return
+        self._service_streak += 1
+        if self._service_streak >= SERVICE_ERROR_STREAK and not self._stopped_by:
+            self._stopped_by = (
+                f"the AI service failed {self._service_streak} trials in a row; the last "
+                f"said: {result.error}"
+            )
+            self._stop.set()
+            self._log(f"sweep: stopping: {self._stopped_by}")
 
     def _claim(self) -> Trial | None:
         """Take the next trial whose task is not already being run.
@@ -964,6 +1085,11 @@ class Harness:
         if not (folder / OUTCOME_FILE).exists():
             # The run returned without a verdict: treat like a killed run.
             return TrialResult(trial, CRASHED, error="the run left no outcome")
+        if run_ended_by_service(folder):
+            # Not a result: no mark, no judge call. Set aside, run again later.
+            reason = _outcome_reason(folder)
+            self._move_aside(trial, folder, SERVICE_ERROR_DIR)
+            return TrialResult(trial, SERVICE_ERROR, error=reason)
         return TrialResult(trial, RAN, self._mark(trial, folder))
 
     def run_one(self, trial: Trial, config: Config, folder: Path, browser: Any) -> None:
@@ -1021,24 +1147,42 @@ class Harness:
         write_verdict(folder, verdict)
         return verdict
 
-    def _move_aside(self, trial: Trial, folder: Path) -> Path:
-        """Move a killed run's folder out of the way, keeping it.
+    def _move_aside(self, trial: Trial, folder: Path, into: str = INTERRUPTED_DIR) -> Path:
+        """Move a run's folder out of the way, keeping it as evidence.
 
         Args:
             trial: The trial.
-            folder: Its partial run folder.
+            folder: Its run folder.
+            into: :data:`INTERRUPTED_DIR` for a killed run, or
+                :data:`SERVICE_ERROR_DIR` for one the AI service stopped.
 
         Returns:
-            Path: Where it went: ``_interrupted/<task>/trial-<n>-<k>``, with
-            ``k`` counting earlier interruptions of the same trial.
+            Path: Where it went: ``<into>/<task>/trial-<n>-<k>``, with ``k``
+            counting earlier set-asides of the same trial.
         """
-        parent = self.folder / INTERRUPTED_DIR / trial.task.id
+        parent = self.folder / into / trial.task.id
         parent.mkdir(parents=True, exist_ok=True)
         k = 1
         while (target := parent / f"trial-{trial.number}-{k}").exists():
             k += 1
         folder.rename(target)
         return target
+
+
+def _outcome_reason(folder: Path) -> str:
+    """Read why a run ended, as the run wrote it.
+
+    Args:
+        folder: A run folder holding its outcome file.
+
+    Returns:
+        str: The run's own reason, or its ending's name if it gave none.
+    """
+    try:
+        outcome = json.loads((folder / OUTCOME_FILE).read_text(encoding="utf-8"))["outcome"]
+        return str(outcome.get("reason") or outcome.get("category", ""))
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return ""
 
 
 def _read_verdict(folder: Path) -> TrialVerdict | None:

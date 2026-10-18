@@ -370,7 +370,7 @@ def test_pinned_host_reaches_the_wire_with_fallbacks_off() -> None:
     call(client_for(load_profile("openrouter"), transport=transport))
 
     assert transport.request["extra_body"] == {
-        "provider": {"order": ["Novita"], "allow_fallbacks": False}
+        "provider": {"order": ["Nebius"], "allow_fallbacks": False}
     }
 
 
@@ -544,9 +544,9 @@ def test_every_call_records_tokens_and_wall_clock() -> None:
     assert (record.prompt_tokens, record.completion_tokens, record.total_tokens) == (1200, 48, 1248)
     assert record.latency_s >= 0.0
     assert record.finish_reason == "stop"
-    # Priced from the checked-in table: $0.05 and $0.20 per million tokens on
-    # the pinned host, so 1,200 in and 48 out come to $0.0000696.
-    assert record.cost_usd == pytest.approx(1200 * 0.05e-6 + 48 * 0.20e-6)
+    # Priced from the checked-in table: $0.06 and $0.24 per million tokens on
+    # the pinned host, so 1,200 in and 48 out come to $0.00008352.
+    assert record.cost_usd == pytest.approx(1200 * 0.06e-6 + 48 * 0.24e-6)
 
 
 @pytest.mark.unit

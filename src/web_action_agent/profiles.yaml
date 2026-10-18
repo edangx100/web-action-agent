@@ -41,10 +41,14 @@ openrouter:
   api_key_required: true
   text:
     model: nvidia/nemotron-3-nano-30b-a3b
-    # Of the hosts serving this model, Novita is the one advertising
-    # response_format support, so pinning it buys reproducibility and
-    # schema-constrained decoding in the same stroke.
-    provider_order: [Novita]
+    # Of the hosts serving this model, Nebius is the one supporting
+    # structured_outputs -- strict, schema-constrained replies -- so pinning it
+    # buys reproducibility and schema-constrained decoding in the same stroke.
+    # Supporting `response_format` alone is not enough: OpenRouter drops any
+    # host without structured_outputs from a request carrying a strict schema,
+    # and with fallback off that leaves no host at all. (Checked 2026-10-18 in
+    # OpenRouter's endpoint list: Novita lists response_format only.)
+    provider_order: [Nebius]
     supports_json_schema: true
   vision:
     # The vision sibling is routed only as a free endpoint here, and that

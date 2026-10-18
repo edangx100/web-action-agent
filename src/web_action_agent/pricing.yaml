@@ -39,10 +39,10 @@ openrouter:
   # Aggregator. Prices vary by the host serving the model, and this project
   # pins one host per route, so the price to copy here is that host's.
   nvidia/nemotron-3-nano-30b-a3b:
-    input_usd_per_mtok: 0.05
-    output_usd_per_mtok: 0.20
-    checked: "2026-10-11"
-    note: planner text route; the pinned Novita host, from OpenRouter's endpoint list
+    input_usd_per_mtok: 0.06
+    output_usd_per_mtok: 0.24
+    checked: "2026-10-18"
+    note: planner text route; the pinned Nebius host, from OpenRouter's endpoint list
 
   nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free:
     input_usd_per_mtok:

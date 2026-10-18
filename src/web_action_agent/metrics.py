@@ -66,7 +66,13 @@ from typing import Any
 
 from .agreement import DEFAULT_MIN_LABELS, Agreement, measure
 from .budget import JUDGE_LOG, read_calls
-from .eval_harness import LIBRARY_DIR, SWEEP_FILE, VERDICT_FILE
+from .eval_harness import (
+    LIBRARY_DIR,
+    SERVICE_ERROR,
+    SERVICE_ERROR_OUTCOMES,
+    SWEEP_FILE,
+    VERDICT_FILE,
+)
 from .judge import FAIL, FAILURE_CATEGORIES, PASS
 from .skill_store import SkillStore, SkillStoreError
 from .trace import OUTCOME_FILE
@@ -98,7 +104,8 @@ class TrialRow:
         trial: Which attempt, from 1.
         folder: The trial's run folder.
         status: Its mark: ``pass``, ``fail``, or something unfinished such as
-            ``judging_error``.
+            ``judging_error``, or ``service_error`` for a run the AI service
+            stopped, which is never a result.
         category: For a fail, the kind of mistake, when the judge said.
         reason: The one-sentence reason for the mark.
         steps: Steps the agent took.
@@ -165,11 +172,16 @@ def read_trial(folder: Path, task_id: str, trial: int) -> TrialRow:
         raise MetricsError(f"{folder}: cannot read its outcome or mark: {error}") from error
 
     cost = outcome.get("cost") or {}
+    status = verdict.get("status", "")
+    # A run the AI service stopped is not a result, even if it was marked as
+    # a fail before that rule existed: it counts as unmarked until run again.
+    if (outcome.get("outcome") or {}).get("category") in SERVICE_ERROR_OUTCOMES:
+        status = SERVICE_ERROR
     return TrialRow(
         task_id=task_id,
         trial=trial,
         folder=folder,
-        status=verdict.get("status", ""),
+        status=status,
         category=verdict.get("category"),
         reason=verdict.get("reason", ""),
         steps=int(outcome.get("steps", 0)),

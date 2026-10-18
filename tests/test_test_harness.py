@@ -15,6 +15,7 @@ that quietly reaches the network -- shows up much later and far from the cause.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -23,6 +24,8 @@ from pathlib import Path
 import pytest
 import yaml
 from marker_policy import TEST_TYPE_MARKERS, applied_type_markers, policy_violations
+
+from web_action_agent import config
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -221,3 +224,13 @@ def test_two_type_markers_are_a_violation():
 
     assert len(violations) == 1
     assert "unit, live" in violations[0]
+
+
+@pytest.mark.unit
+def test_no_test_sees_this_machines_own_env_file_or_waa_variables() -> None:
+    # A developer's .env holds their keys and choices; a test that read it
+    # would behave differently on every machine. See tests/conftest.py.
+    assert config.DEFAULT_DOTENV_PATH.name == "absent.env"
+    assert not config.DEFAULT_DOTENV_PATH.exists()
+    assert not [name for name in os.environ if name.startswith("WAA_")]
+    assert not any(name.startswith("WAA_") for name in config.resolve_env())

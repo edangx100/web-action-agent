@@ -64,6 +64,11 @@ LEDGER_FILE = "budget.json"
 #: Every judge call the sweep made, one JSON record per line, append-only.
 JUDGE_LOG = "judge_calls.jsonl"
 
+#: The connection-test calls made before the sweep's trials start, one per
+#: route each time the sweep starts. A fraction of a cent, but paid for, so
+#: counted.
+PREFLIGHT_LOG = "preflight_calls.jsonl"
+
 #: Seconds in an hour, named so the conversions below read as what they are.
 SECONDS_PER_HOUR = 3600.0
 
@@ -131,9 +136,10 @@ def sweep_spend(sweep_dir: Path) -> Spend:
 
     Returns:
         Spend: Every agent call in every trial folder -- finished, running,
-        or killed halfway -- plus every judge call in the judge log.
+        or killed halfway -- plus every judge call in the judge log, and every
+        connection-test call made before the trials started.
     """
-    files = [*sweep_dir.rglob(COST_LOG), sweep_dir / JUDGE_LOG]
+    files = [*sweep_dir.rglob(COST_LOG), sweep_dir / JUDGE_LOG, sweep_dir / PREFLIGHT_LOG]
     known, calls, unpriced = 0.0, 0, 0
     for path in files:
         for record in read_calls(path):
@@ -145,8 +151,8 @@ def sweep_spend(sweep_dir: Path) -> Spend:
     return Spend(known_usd=known, calls=calls, unpriced_calls=unpriced)
 
 
-def record_judge_call(sweep_dir: Path, record: CallRecord) -> None:
-    """Add one judge call to the sweep's judge log.
+def record_judge_call(sweep_dir: Path, record: CallRecord, *, log: str = JUDGE_LOG) -> None:
+    """Add one call to one of the sweep's call logs: the judge's by default.
 
     Append-only, so a trial that is marked again later -- after a judging
     error, say -- adds its new call rather than replacing the old one. Both
@@ -154,10 +160,12 @@ def record_judge_call(sweep_dir: Path, record: CallRecord) -> None:
 
     Args:
         sweep_dir: The sweep's folder.
-        record: The judge call's cost record.
+        record: The call's cost record.
+        log: Which log: :data:`JUDGE_LOG`, or :data:`PREFLIGHT_LOG` for a
+            connection test.
     """
-    with (sweep_dir / JUDGE_LOG).open("a", encoding="utf-8") as log:
-        log.write(json.dumps(asdict(record)) + "\n")
+    with (sweep_dir / log).open("a", encoding="utf-8") as out:
+        out.write(json.dumps(asdict(record)) + "\n")
 
 
 def unpriced_routes(profiles: Iterable[Profile], prices: PriceList | None = None) -> list[str]:
