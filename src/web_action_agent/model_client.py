@@ -154,9 +154,20 @@ class ModelTimeoutError(ModelClientError):
     well answer the next request, and a run that ends because of one should
     say so in those words -- "the endpoint was too slow" is a finding an
     evaluation can act on, and "the call failed" is not.
+
+    Attributes:
+        record: The call, with its tokens and cost unknown. The endpoint was
+            working on it, and may well charge for what it wrote, but never
+            said how much. Recorded rather than dropped, so that the run's
+            cost reads "unknown" instead of quietly leaving the call out.
+            None when the error was raised before the call was set up.
     """
 
     category = LLM_TIMEOUT
+
+    def __init__(self, message: str, *, record: CallRecord | None = None) -> None:
+        super().__init__(message)
+        self.record = record
 
 
 class ModelBusyError(ModelClientError):
@@ -1077,6 +1088,7 @@ class ModelClient:
         spread: Callable[[], float] = random.random,
         env: Mapping[str, str] | None = None,
         transport: Any | None = None,
+        max_output_tokens: int | None = None,
     ) -> None:
         """Build a client for one endpoint.
 
@@ -1102,12 +1114,15 @@ class ModelClient:
             transport: An object shaped like ``openai.OpenAI``. Injected by
                 tests so the whole request-building path can be asserted on
                 without a network, a key, or a bill.
+            max_output_tokens: The longest reply a call may write, unless the
+                call sets its own. None leaves it to the endpoint.
 
         Raises:
             MissingAPIKeyError: If the profile needs a key and none is set.
         """
         self.profile = profile
         self.timeout_s = timeout_s
+        self.max_output_tokens = max_output_tokens
         self.backoff = backoff or Backoff()
         # "is not None", not "or": an empty table is a real choice -- price
         # nothing -- and "or" would treat it as missing and swap in the
@@ -1158,11 +1173,12 @@ class ModelClient:
 
         Returns:
             ModelClient: A client for the configured profile, using the run's
-            model-call timeout.
+            model-call timeout and reply-length limit.
         """
         return cls(
             resolve_profile(config, path=profiles_path),
             timeout_s=config.llm_timeout_s,
+            max_output_tokens=config.llm_max_output_tokens,
             backoff=Backoff.from_config(config),
             env=env,
             transport=transport,
@@ -1256,7 +1272,8 @@ class ModelClient:
                 planner that answers differently on identical input makes an
                 evaluation impossible to interpret.
             seed: Seed for endpoints that honour one. None omits it.
-            max_tokens: Output ceiling, or None for the endpoint's default.
+            max_tokens: Output ceiling for this call. None for the client's
+                own, and if that is None too, the endpoint's default.
             timeout_s: Ceiling on this one call, overriding the client's own.
                 Meant for a caller holding the run's remaining wall clock: a
                 ninety-second call started with ten seconds left in the run
@@ -1288,6 +1305,8 @@ class ModelClient:
         }
         if seed is not None:
             request["seed"] = seed
+        if max_tokens is None:
+            max_tokens = self.max_output_tokens
         if max_tokens is not None:
             request["max_tokens"] = max_tokens
         constrained = schema is not None and route.supports_json_schema
@@ -1311,7 +1330,29 @@ class ModelClient:
         # Taken before the first attempt, so the span covers any waiting the
         # endpoint made the run do as well as the attempt that finally worked.
         started_at = utc_now()
-        completion, latency_s, backoffs = self._call_with_backoff(request, route, ceiling)
+        clock_started = time.perf_counter()
+        try:
+            completion, latency_s, backoffs = self._call_with_backoff(request, route, ceiling)
+        except ModelTimeoutError as error:
+            # The endpoint may charge for what it wrote before the call was
+            # cut off, but never said how much: so the call is recorded with
+            # its tokens and cost unknown, which makes the run's total read
+            # "unknown" rather than leave the call out.
+            unknown = CallRecord(
+                call_id=new_id("call"),
+                started_at=started_at,
+                ended_at=utc_now(),
+                profile=self.profile.name,
+                model=route.model,
+                vision=vision,
+                prompt_tokens=None,
+                completion_tokens=None,
+                latency_s=time.perf_counter() - clock_started,
+                finish_reason=None,
+                cost_usd=None,
+                schema_enforced=constrained,
+            )
+            raise ModelTimeoutError(str(error), record=unknown) from error
         ended_at = utc_now()
 
         text, finish_reason = self._read_choice(completion)

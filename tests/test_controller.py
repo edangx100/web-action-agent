@@ -495,6 +495,32 @@ def test_a_broken_endpoint_ends_the_run_in_its_own_category(error, expected):
     assert not report.outcome.ok
 
 
+@pytest.mark.mock_llm
+def test_a_call_cut_off_by_its_time_limit_is_billed_as_unknown():
+    """The cut-off call stays in the run's cost, which then reads unknown, not lower."""
+    cut_off = CallRecord(
+        call_id=new_id("call"),
+        started_at="2026-09-17T08:00:00.000Z",
+        ended_at="2026-09-17T08:01:30.000Z",
+        profile="local",
+        model="stub",
+        vision=False,
+        prompt_tokens=None,
+        completion_tokens=None,
+        latency_s=90.0,
+        finish_reason=None,
+    )
+    error = ModelTimeoutError("no answer within 90s", record=cut_off)
+    controller, _, _ = a_controller(planner=RaisingPlanner(error))
+
+    report = controller.run(TASK, start_url=START)
+
+    assert report.outcome.category == "llm_timeout"
+    assert report.steps[-1].records == (cut_off,)
+    assert report.cost.calls == 1 and report.cost.unpriced_calls == 1
+    assert report.cost.cost_usd is None, "unknown, never a quiet zero"
+
+
 @pytest.mark.unit
 def test_every_category_a_run_can_end_in_is_one_the_table_knows():
     """A finding in a category nothing counts is a finding that will not appear."""

@@ -559,8 +559,10 @@ class Controller:
             # A broken or overloaded endpoint is not a bad step, and the model
             # layer has already waited out whatever was worth waiting for. The
             # category comes off the error, so a busy endpoint and a dead one
-            # are different findings.
-            self._add_step(observation, attempts=1)
+            # are different findings. A call that was cut off still counts
+            # towards the run's cost, so its record, if it has one, is kept.
+            record = getattr(error, "record", None)
+            self._add_step(observation, attempts=1, records=(record,) if record else ())
             return RunOutcome.from_model_error(error, steps=self._step)
 
         if self._gate is not None:
@@ -804,6 +806,7 @@ class Controller:
         forced: str = "",
         attempts: int | None = None,
         replay: Replay | None = None,
+        records: tuple[CallRecord, ...] = (),
     ) -> None:
         """Record one step for the trace.
 
@@ -818,6 +821,8 @@ class Controller:
                 far as a plan.
             replay: What came of replaying a stored skill, for a ``use_skill``
                 step. None on every other kind.
+            records: Call costs, for a step that never got as far as a plan.
+                Taken from ``plan`` when there is one.
 
         Raises:
             TraceError: If the step cannot be written to the run folder, or
@@ -827,7 +832,6 @@ class Controller:
                 run that did not happen the way the file says it did.
         """
         rejections = ()
-        records: tuple[CallRecord, ...] = ()
         if plan is not None:
             rejections = tuple(
                 attempt.rejection for attempt in plan.attempts if attempt.rejection is not None

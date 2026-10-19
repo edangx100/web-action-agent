@@ -130,6 +130,19 @@ action_timeout_s: 30.0    # one browser action
 llm_timeout_s: 90.0       # one model call
 run_timeout_s: 300.0      # one whole run, wall clock
 
+# --- How long a model's reply may be -------------------------------------------
+#
+# The longest reply one model call may write, in tokens. A model can get stuck
+# writing the same thing over and over: one wrote 61,000 tokens over thirteen
+# minutes for a step whose answer is a few hundred. This limit stops it at the
+# host, which reports what was written, so the call is still counted and paid
+# for at its true size. A reply cut short this way fails to parse and is asked
+# for again, like any other unusable reply.
+#
+# Set well above what a working reply needs: in the published runs, 99 in 100
+# replies were under 5,700 tokens, and the longest was 9,484.
+llm_max_output_tokens: 8192
+
 # --- When the AI service says you are going too fast -------------------------
 #
 # An endpoint answering "too many requests" is not a broken endpoint, and the

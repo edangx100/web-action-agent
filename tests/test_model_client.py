@@ -764,6 +764,62 @@ def test_a_request_with_no_time_limit_is_left_alone() -> None:
     assert response.stream is body
 
 
+@pytest.mark.unit
+def test_a_call_cut_off_by_its_time_limit_is_recorded_with_its_cost_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The endpoint may well charge for what it wrote; it just never said how much.
+
+    Dropping the call would make the run's cost look lower than it was, and in
+    the live run that found this, cut-off calls were most of the money.
+    """
+    client = network_client(monkeypatch, KeptAlive(blank_for_s=10.0), timeout_s=0.3)
+
+    with pytest.raises(ModelTimeoutError) as raised:
+        call(client)
+
+    record = raised.value.record
+    assert record is not None
+    assert record.model == client.profile.model
+    assert (record.prompt_tokens, record.completion_tokens, record.cost_usd) == (None, None, None)
+    assert record.latency_s >= 0.3
+
+
+# --- The longest reply a call may write ------------------------------------------
+
+
+@pytest.mark.unit
+def test_a_client_built_from_settings_caps_every_reply() -> None:
+    transport = StubTransport()
+    client = ModelClient.from_config(Config(), transport=transport, env={})
+
+    call(client)
+
+    assert transport.request["max_tokens"] == Config().llm_max_output_tokens == 8192
+
+
+@pytest.mark.unit
+def test_one_call_can_set_its_own_cap() -> None:
+    transport = StubTransport()
+    client = ModelClient(load_profile("local"), transport=transport, env={}, max_output_tokens=8192)
+
+    call(client, max_tokens=50)
+
+    assert transport.request["max_tokens"] == 50
+
+
+@pytest.mark.unit
+def test_no_cap_leaves_the_reply_length_to_the_endpoint() -> None:
+    transport = StubTransport()
+    client = ModelClient.from_config(
+        Config(llm_max_output_tokens=None), transport=transport, env={}
+    )
+
+    call(client)
+
+    assert "max_tokens" not in transport.request
+
+
 # --- Consistency with the documentation -------------------------------------
 
 

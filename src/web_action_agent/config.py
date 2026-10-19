@@ -280,6 +280,15 @@ class Config(BaseModel):
     # exception that ends the run without a verdict.
     action_timeout_s: float = Field(default=30.0, gt=0.0, description="One browser action.")
     llm_timeout_s: float = Field(default=90.0, gt=0.0, description="One model call.")
+    llm_max_output_tokens: int | None = Field(
+        default=8192,
+        ge=1,
+        description=(
+            "The longest reply one model call may write, in tokens; None for "
+            "the endpoint's own limit. Stops a model that loops at the host, "
+            "where what it wrote is still counted and billed."
+        ),
+    )
     backoff_attempts: int = Field(
         default=4,
         ge=1,
