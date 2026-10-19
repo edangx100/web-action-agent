@@ -20,21 +20,28 @@ money, and would assert nothing about our code that the stub does not.
 
 from __future__ import annotations
 
+import json
+import time
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx2
 import pytest
 
+from web_action_agent import model_client
 from web_action_agent.config import Config, load_config
 from web_action_agent.model_client import (
     DEFAULT_PROFILES_PATH,
     UNUSED_API_KEY,
     CallRecord,
+    DeadlineTransport,
     MissingAPIKeyError,
     ModelClient,
     ModelClientError,
     ModelResponseError,
+    ModelTimeoutError,
     Profile,
     ProfileError,
     has_image,
@@ -639,6 +646,122 @@ def test_closing_the_client_closes_the_transport() -> None:
         call(client)
 
     assert transport.closed is True
+
+
+# --- The time limit on a call --------------------------------------------------
+
+#: A complete chat reply, as the endpoint's JSON body.
+A_REPLY = json.dumps(
+    {
+        "id": "gen-1",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "nvidia/nemotron-3-nano-30b-a3b",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": '{"action": "scroll"}'},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+).encode()
+
+
+class KeptAlive(httpx2.SyncByteStream):
+    """A reply body that sends blank bytes for a while before the answer.
+
+    This is what OpenRouter does while a model is still writing: it keeps the
+    connection open with a few blank bytes every so often, so no single wait
+    is ever long.
+    """
+
+    def __init__(self, blank_for_s: float, every_s: float = 0.02) -> None:
+        """Set up the body.
+
+        Args:
+            blank_for_s: How long to send blank bytes before the answer.
+            every_s: The gap between blank bytes.
+        """
+        self.blank_for_s = blank_for_s
+        self.every_s = every_s
+
+    def __iter__(self) -> Iterator[bytes]:
+        """Send blank bytes, then the whole reply."""
+        until = time.monotonic() + self.blank_for_s
+        while time.monotonic() < until:
+            time.sleep(self.every_s)
+            yield b" "
+        yield A_REPLY
+
+
+def network_client(
+    monkeypatch: pytest.MonkeyPatch, body: httpx2.SyncByteStream, *, timeout_s: float
+) -> ModelClient:
+    """Build a real client, with only the network itself replaced.
+
+    Everything above the network is the real thing -- the SDK, its HTTP
+    client, and the time-limit transport the model client installs -- so
+    what is tested is the wiring a live run uses.
+
+    Args:
+        monkeypatch: To swap the network for a stand-in.
+        body: The reply body every request gets.
+        timeout_s: The client's time limit per call.
+
+    Returns:
+        ModelClient: The client.
+    """
+    stand_in = httpx2.MockTransport(lambda request: httpx2.Response(200, stream=body))
+    monkeypatch.setattr(model_client.httpx2, "HTTPTransport", lambda: stand_in)
+    return ModelClient(
+        load_profile("openrouter"),
+        env={"WAA_OPENROUTER_API_KEY": "test-key"},
+        timeout_s=timeout_s,
+    )
+
+
+@pytest.mark.unit
+def test_a_reply_kept_alive_past_the_limit_is_cut_off_at_the_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The time limit counts the whole call, not each wait within it.
+
+    The stand-in would keep the call open for ten seconds, never pausing for
+    long; a limit on each wait alone would let it. In a live run, this was a
+    model writing for thirteen minutes under a 90-second limit.
+    """
+    client = network_client(monkeypatch, KeptAlive(blank_for_s=10.0), timeout_s=0.3)
+    started = time.monotonic()
+
+    with pytest.raises(ModelTimeoutError, match="within 0s"):
+        call(client)
+
+    assert time.monotonic() - started < 2.0, "stopped at the limit, not when the reply ended"
+
+
+@pytest.mark.unit
+def test_a_reply_kept_alive_that_ends_in_time_is_read_as_usual(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = network_client(monkeypatch, KeptAlive(blank_for_s=0.1), timeout_s=5.0)
+
+    response = call(client)
+
+    assert response.text == '{"action": "scroll"}'
+
+
+@pytest.mark.unit
+def test_a_request_with_no_time_limit_is_left_alone() -> None:
+    body = KeptAlive(blank_for_s=0.0)
+    transport = DeadlineTransport(
+        httpx2.MockTransport(lambda request: httpx2.Response(200, stream=body))
+    )
+
+    response = transport.handle_request(httpx2.Request("POST", "https://example.test/"))
+
+    assert response.stream is body
 
 
 # --- Consistency with the documentation -------------------------------------

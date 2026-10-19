@@ -7,7 +7,8 @@ requires-python = ">=3.11"
 license = { file = "LICENSE" }
 dependencies = [
     "playwright>=1.47",
-    "openai>=1.40",
+    "openai>=3.3",
+    "httpx2>=2.12",
     "pydantic>=2.8",
     "pillow>=10.4",
     "typer>=0.12",

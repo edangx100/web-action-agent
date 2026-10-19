@@ -64,8 +64,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
 
+import httpx2
 import yaml
-from openai import APITimeoutError, OpenAI
+from openai import APITimeoutError, DefaultHttpxClient, OpenAI
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -960,6 +961,100 @@ def parse_json_object(text: str) -> dict[str, Any]:
     raise ModelResponseError("model reply was not a JSON object", text=text)
 
 
+class _DeadlineStream(httpx2.SyncByteStream):
+    """A reply body that gives up once its call has run out of time.
+
+    Wraps the body as it arrives, piece by piece, and checks the clock at each
+    piece. See :class:`DeadlineTransport` for why that is needed.
+    """
+
+    def __init__(
+        self, inner: httpx2.SyncByteStream, deadline: float, ceiling: float, request: Any
+    ) -> None:
+        """Wrap one reply body.
+
+        Args:
+            inner: The body as the HTTP layer delivers it.
+            deadline: The :func:`time.monotonic` reading by which the whole
+                reply must have arrived.
+            ceiling: The call's time limit in seconds, for the message.
+            request: The request the reply answers, for the error.
+        """
+        self._inner = inner
+        self._deadline = deadline
+        self._ceiling = ceiling
+        self._request = request
+
+    def __iter__(self) -> Any:
+        """Pass the body on, piece by piece, until the deadline passes.
+
+        Raises:
+            httpx2.ReadTimeout: Once the deadline has passed. The SDK turns
+                this into its own timeout error, as for any other timeout.
+        """
+        for chunk in self._inner:
+            if time.monotonic() > self._deadline:
+                raise httpx2.ReadTimeout(
+                    f"no complete reply within {self._ceiling:.0f}s", request=self._request
+                )
+            yield chunk
+
+    def close(self) -> None:
+        """Close the body, which hands the connection back or drops it."""
+        self._inner.close()
+
+
+class DeadlineTransport(httpx2.BaseTransport):
+    """Holds every call to its time limit as a total, from request to last byte.
+
+    The HTTP layer's own timeout is a limit on each *wait*: how long it may go
+    without receiving anything. That is not the same as a limit on the call.
+    While a model is still writing, OpenRouter keeps the connection alive by
+    sending a few blank bytes every so often, and each one starts the wait
+    afresh. So a model that thinks for thirteen minutes produces a call that
+    lasts thirteen minutes, under a "90 second" limit -- which is how a live
+    run once sat on two trials with nothing to show for it.
+
+    This transport makes the limit mean what it says. It notes the time a
+    request is sent, and the reply's body then gives up at the first piece
+    that arrives after the limit. The per-wait timeout still covers a
+    connection that goes completely silent.
+    """
+
+    def __init__(self, inner: httpx2.BaseTransport | None = None) -> None:
+        """Wrap a transport.
+
+        Args:
+            inner: The transport that actually sends requests. Defaults to
+                an ordinary HTTP one; a test passes a stand-in.
+        """
+        self._inner = inner or httpx2.HTTPTransport()
+
+    def handle_request(self, request: httpx2.Request) -> httpx2.Response:
+        """Send one request, and hold its reply to the request's time limit.
+
+        Args:
+            request: The request. Its time limit is the ``read`` timeout the
+                SDK set on it -- the client's or the call's own ceiling.
+
+        Returns:
+            httpx2.Response: The reply, whose body gives up once the limit
+            has passed. Unchanged when the request carries no limit.
+        """
+        started = time.monotonic()
+        response = self._inner.handle_request(request)
+        ceiling = request.extensions.get("timeout", {}).get("read")
+        if ceiling is None:
+            return response
+        assert isinstance(response.stream, httpx2.SyncByteStream)
+        response.stream = _DeadlineStream(response.stream, started + ceiling, ceiling, request)
+        return response
+
+    def close(self) -> None:
+        """Close the wrapped transport and its connections."""
+        self._inner.close()
+
+
 class ModelClient:
     """The transport every model call in the project goes through.
 
@@ -998,8 +1093,10 @@ class ModelClient:
             spread: Where the jitter comes from -- a callable returning a
                 number in ``[0, 1)``. Injected for the same reason: a test that
                 wants to assert an exact pause can hand over a constant.
-            timeout_s: Ceiling on one call. Expiry is a categorized failure the
-                run reports, not an exception that ends it without a verdict.
+            timeout_s: Ceiling on one call, from sending the request to the
+                last byte of the reply (see :class:`DeadlineTransport`).
+                Expiry is a categorized failure the run reports, not an
+                exception that ends it without a verdict.
             env: Environment to read the key from. Defaults to ``.env``
                 merged under the process environment.
             transport: An object shaped like ``openai.OpenAI``. Injected by
@@ -1028,6 +1125,9 @@ class ModelClient:
             api_key=api_key or resolve_api_key(profile, env if env is not None else resolve_env()),
             base_url=profile.base_url,
             timeout=timeout_s,
+            # The SDK's own HTTP client, with its usual settings, except that
+            # each call's time limit counts the whole call.
+            http_client=DefaultHttpxClient(transport=DeadlineTransport()),
             # Retries are switched off here on purpose. Bounded backoff for
             # rate-limited endpoints is a policy this project owns and records
             # in the trace; two retry layers stacked would multiply the wait

@@ -955,6 +955,7 @@ name = "web-action-agent"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
+    { name = "httpx2" },
     { name = "jsonschema" },
     { name = "openai" },
     { name = "pillow" },
@@ -974,8 +975,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx2", specifier = ">=2.12" },
     { name = "jsonschema", specifier = ">=4.23" },
-    { name = "openai", specifier = ">=1.40" },
+    { name = "openai", specifier = ">=3.3" },
     { name = "pillow", specifier = ">=10.4" },
     { name = "playwright", specifier = ">=1.47" },
     { name = "publicsuffixlist", specifier = ">=1.0" },
