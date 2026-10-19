@@ -514,6 +514,18 @@ def test_one_crashing_trial_does_not_stop_the_others(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_a_crash_says_what_crashed(tmp_path: Path) -> None:
+    lines: list[str] = []
+    harness = fake_harness(tmp_path / "sweep", FakeRunner(crash="fixture-browse/trial-1"), trials=1)
+    harness._log = lines.append
+
+    harness.run()
+
+    crashed = next(line for line in lines if "fixture-browse/trial-1" in line)
+    assert "crashed (RuntimeError: the browser fell over)" in crashed
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("change", "named"),
     [

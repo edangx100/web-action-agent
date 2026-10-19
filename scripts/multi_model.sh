@@ -19,7 +19,7 @@
 #   uv run scripts/multi_model.sh [--profiles "A B C"] [--trials N] [--attempts N]
 #
 #   --profiles  the profiles to compare, in one quoted list, primary first
-#               (default: "openrouter openrouter-qwen openrouter-mistral")
+#               (default: "openrouter openrouter-qwen openrouter-glimmer")
 #   --trials    trials per task in each arm (default: 2, fewer than the
 #               headline sweeps; the table states each arm's N)
 #   --attempts  tries per arm before giving up (default: 3); see below
@@ -36,8 +36,9 @@
 # --attempts times. Safe to run again: each arm resumes where it stopped.
 #
 # Exit codes: 0 when every arm is complete; 1 when an arm stopped early (a
-# ceiling was reached) -- run it again or read the message; 2 when a command
-# could not run at all, or the code has uncommitted changes.
+# ceiling was reached, or the AI service was too busy to start) -- run it again
+# or read the message; 2 when a command could not run at all, or the code has
+# uncommitted changes.
 
 set -euo pipefail
 
@@ -45,7 +46,7 @@ set -euo pipefail
 WAA="${WAA:-waa}"
 GIT="${GIT:-git}"
 
-profiles="openrouter openrouter-qwen openrouter-mistral"
+profiles="openrouter openrouter-qwen openrouter-glimmer"
 trials="2"
 attempts="3"
 # Seconds between tries of an arm. Overridable so the tests need not wait.

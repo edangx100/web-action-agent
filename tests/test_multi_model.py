@@ -56,7 +56,7 @@ REPO = Path(__file__).parent.parent
 SCRIPT = REPO / "scripts" / "multi_model.sh"
 
 #: The profiles the comparison adds beside the primary one.
-COMPARISON_PROFILES = ("openrouter-qwen", "openrouter-mistral")
+COMPARISON_PROFILES = ("openrouter-qwen", "openrouter-glimmer")
 
 #: A made-up commit, as ``git rev-parse --short=12`` prints one.
 COMMIT = "0123456789ab"
@@ -516,7 +516,7 @@ def test_the_script_runs_one_cold_arm_per_profile_into_its_own_folder(tmp_path: 
     assert code == 0
     assert calls == [
         f"eval --cold --trials 2 --profile {p} --out runs/models-{p}"
-        for p in ("openrouter", "openrouter-qwen", "openrouter-mistral")
+        for p in ("openrouter", "openrouter-qwen", "openrouter-glimmer")
     ]
 
 

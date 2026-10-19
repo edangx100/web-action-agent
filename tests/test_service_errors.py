@@ -31,7 +31,9 @@ from test_eval_harness import (
 )
 from test_metrics import make_sweep
 from test_model_client import StubTransport, client_for
+from typer.testing import CliRunner
 
+from web_action_agent import cli
 from web_action_agent.budget import PREFLIGHT_LOG, read_calls, sweep_spend
 from web_action_agent.config import Config
 from web_action_agent.eval_harness import (
@@ -43,6 +45,7 @@ from web_action_agent.eval_harness import (
     SERVICE_FAILED,
     VERDICT_FILE,
     HarnessError,
+    ServiceBusyError,
     Trial,
     trial_state,
 )
@@ -53,6 +56,7 @@ from web_action_agent.model_client import (
     MODEL_ERROR,
     PREFLIGHT_SCHEMA,
     RATE_LIMITED,
+    ModelBusyError,
     ModelClientError,
     load_profile,
 )
@@ -310,14 +314,17 @@ def test_a_reply_that_is_not_json_still_proves_the_route_works() -> None:
 class Checked:
     """A stand-in client whose connection test passes or fails, and is counted."""
 
-    def __init__(self, fails: bool = False) -> None:
-        """Set up whether the test fails."""
+    def __init__(self, fails: bool = False, busy: bool = False) -> None:
+        """Set up whether the test fails, and whether as a busy service."""
         self.fails = fails
+        self.busy = busy
         self.tested = 0
 
     def preflight(self) -> tuple[Any, ...]:
         """Pass or fail the connection test."""
         self.tested += 1
+        if self.busy:
+            raise ModelBusyError("refused 4 attempts with 429", status=429)
         if self.fails:
             raise ModelClientError(f"the text route did not answer a test call: {HOST_REFUSED}")
         real = client_for(load_profile("local"), transport=StubTransport('{"ok": true}'))
@@ -334,6 +341,62 @@ def test_a_failed_connection_test_stops_the_sweep_before_any_trial(tmp_path: Pat
         harness.run()
 
     assert runner.ran == []
+
+
+@pytest.mark.unit
+def test_a_busy_service_at_the_connection_test_is_a_reason_to_try_later(tmp_path: Path) -> None:
+    # "Too many requests" is not a mistake in how the sweep was asked for,
+    # and the same command later may work; it is told apart so it can be
+    # retried rather than treated as unusable.
+    runner = FakeRunner()
+    harness = fake_harness(tmp_path / "sweep", runner, trials=1)
+    harness._client_factory = lambda config: Checked(busy=True)
+
+    with pytest.raises(ServiceBusyError, match="429"):
+        harness.run()
+
+    assert runner.ran == []
+
+
+@pytest.mark.unit
+def test_a_broken_route_at_the_connection_test_is_not_called_busy(tmp_path: Path) -> None:
+    harness = fake_harness(tmp_path / "sweep", FakeRunner(), trials=1)
+    harness._client_factory = lambda config: Checked(fails=True)
+
+    with pytest.raises(HarnessError) as raised:
+        harness.run()
+
+    assert not isinstance(raised.value, ServiceBusyError)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (ServiceBusyError("refused 4 attempts with 429"), 1),
+        (HarnessError("the folder holds a different sweep"), 2),
+    ],
+)
+def test_waa_eval_calls_a_busy_service_unfinished_and_a_mistake_unusable(
+    monkeypatch: pytest.MonkeyPatch, error: HarnessError, code: int
+) -> None:
+    # Exit 1 is what the experiment scripts retry after a pause; exit 2 stops
+    # them, because a mistake fails the same way every time.
+    class Refused:
+        """Stands in for the harness: the sweep cannot start."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def run(self) -> Any:
+            raise error
+
+    monkeypatch.setattr(cli, "Harness", Refused)
+    monkeypatch.setattr(cli, "resolve_env", dict)
+
+    result = CliRunner().invoke(cli.app, ["eval"])
+
+    assert result.exit_code == code, result.output
 
 
 @pytest.mark.unit

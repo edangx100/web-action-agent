@@ -55,6 +55,7 @@ from web_action_agent.eval_harness import (
     SWEEP_FILE,
     Harness,
     HarnessError,
+    ServiceBusyError,
     default_sweep_dir,
     passing_trials,
 )
@@ -747,6 +748,11 @@ def eval_command(
     )
     try:
         report = harness.run()
+    except ServiceBusyError as error:
+        # Not a mistake, and not permanent: the same command later may work,
+        # so it is reported as unfinished, which a retrying script retries.
+        typer.echo(f"waa: {error}. Nothing has run; try again later.", err=True)
+        raise typer.Exit(EXIT_TASK_FAILURE) from error
     except HarnessError as error:
         typer.echo(f"waa: {error}", err=True)
         raise typer.Exit(EXIT_USAGE) from error

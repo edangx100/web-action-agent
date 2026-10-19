@@ -122,21 +122,25 @@ openrouter-qwen:
     provider_order: [DeepInfra]
     supports_json_schema: true
 
-openrouter-mistral:
-  # Mistral Small 4 (Mistral AI, open weights): a different maker and a larger
-  # model, 119 billion parameters. Mistral's own host is pinned: it is the only
-  # one serving the model, and it supports structured_outputs. (Checked
-  # 2026-10-19 in OpenRouter's endpoint list.)
+openrouter-glimmer:
+  # Muse Glimmer 30B (Meta, open weights): a third maker, at the same size as
+  # the other two -- 30 billion parameters, dense -- and built for agents.
+  # DeepInfra is pinned: it supports structured_outputs and had full uptime.
+  # (Checked 2026-10-19 in OpenRouter's endpoint list.)
+  #
+  # Not Mistral Small 4, which was tried first: OpenRouter serves it through
+  # one account shared by all its users, and that account stayed over
+  # Mistral's request limit for hours, turning every run away.
   base_url: https://openrouter.ai/api/v1
   api_key_env: WAA_OPENROUTER_API_KEY
   api_key_required: true
   text:
-    model: mistralai/mistral-small-2603
-    provider_order: [Mistral]
+    model: meta/muse-glimmer-30b
+    provider_order: [DeepInfra]
     supports_json_schema: true
   vision:
-    model: mistralai/mistral-small-2603
-    provider_order: [Mistral]
+    model: meta/muse-glimmer-30b
+    provider_order: [DeepInfra]
     supports_json_schema: true
 
 openrouter-judge:

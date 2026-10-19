@@ -58,13 +58,13 @@ openrouter-qwen:
     checked: "2026-10-19"
     note: the pinned DeepInfra host, from OpenRouter's endpoint list
 
-openrouter-mistral:
+openrouter-glimmer:
   # Comparison model; one model serves both routes.
-  mistralai/mistral-small-2603:
-    input_usd_per_mtok: 0.15
-    output_usd_per_mtok: 0.60
+  meta/muse-glimmer-30b:
+    input_usd_per_mtok: 0.30
+    output_usd_per_mtok: 1.20
     checked: "2026-10-19"
-    note: the pinned Mistral host, from OpenRouter's endpoint list
+    note: the pinned DeepInfra host, from OpenRouter's endpoint list
 
 openrouter-judge:
   # The evaluation judge. Price of the pinned Google AI Studio host, as listed

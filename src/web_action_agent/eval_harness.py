@@ -115,6 +115,7 @@ from .model_client import (
     ENDPOINT_UNAVAILABLE,
     MODEL_ERROR,
     RATE_LIMITED,
+    ModelBusyError,
     ModelClient,
     ModelClientError,
     resolve_profile,
@@ -192,6 +193,17 @@ class HarnessError(Exception):
 
     Raised before any trial runs -- an unusable model setting, or a sweep
     folder that holds a *different* sweep -- so nothing is spent.
+    """
+
+
+class ServiceBusyError(HarnessError):
+    """The sweep cannot start *yet*: the AI service turned the connection test away.
+
+    Unlike the other reasons a sweep cannot start, this is not a mistake and
+    not permanent: the service said "too many requests", or that it is down
+    for now. Nothing has run, and the same command later may well work -- so
+    the command reports it as unfinished rather than as unusable, and a
+    script that retries unfinished work retries this too.
     """
 
 
@@ -1081,13 +1093,18 @@ class Harness:
         checked.
 
         Raises:
-            HarnessError: If a route did not answer. No trial has run.
+            ServiceBusyError: If the service turned a test call away as busy
+                or down for now. No trial has run; later may work.
+            HarnessError: If a route did not answer for any other reason. No
+                trial has run.
         """
         preflight = getattr(self._client, "preflight", None)
         if not callable(preflight):
             return
         try:
             tested = preflight()
+        except ModelBusyError as error:
+            raise ServiceBusyError(str(error)) from error
         except ModelClientError as error:
             raise HarnessError(str(error)) from error
         # Paid for, so counted against the ceiling like every other call.
@@ -1126,6 +1143,10 @@ class Harness:
                     self._budget.save()
                     self._count_service_errors(result)
                 mark = result.verdict.status if result.verdict else result.action
+                if result.error:
+                    # Why a trial crashed or was set aside, said where it is
+                    # seen: without it, "crashed" leaves nothing to go on.
+                    mark += f" ({result.error[:300]})"
                 self._log(f"{threading.current_thread().name}: {trial.name} -> {mark}")
 
     def _count_service_errors(self, result: TrialResult) -> None:

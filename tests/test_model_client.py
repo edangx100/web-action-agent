@@ -211,7 +211,7 @@ def test_shipped_profiles_cover_the_three_documented_run_modes() -> None:
         "nvidia",
         "local",
         "openrouter-qwen",
-        "openrouter-mistral",
+        "openrouter-glimmer",
         "openrouter-judge",
     }
     assert profiles["local"].api_key_required is False
