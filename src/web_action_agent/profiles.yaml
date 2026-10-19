@@ -92,6 +92,53 @@ local:
     supports_json_schema: true
   vision: null
 
+# --- Comparison models ---------------------------------------------------------
+#
+# Two more open-weight models, for the multi-model comparison: the same
+# benchmark, the same code, only --profile changed. Both are on the same
+# aggregator and key as `openrouter`, so the comparison is between models, not
+# between services.
+#
+# Each reads screenshots itself, so one model serves both routes: the arm then
+# measures that model alone, rather than a mix of it and Nemotron's vision
+# model. Neither is from the judge's family (google/gemini), which the program
+# checks at start.
+
+openrouter-qwen:
+  # Qwen 3.6 35B-A3B (Alibaba, open weights): the closest match in size to
+  # Nemotron 3 Nano -- 35 billion parameters, 3 billion active per token.
+  # DeepInfra is pinned: it supports structured_outputs, and it already hosts
+  # the primary profile's vision model. (Checked 2026-10-19 in OpenRouter's
+  # endpoint list.)
+  base_url: https://openrouter.ai/api/v1
+  api_key_env: WAA_OPENROUTER_API_KEY
+  api_key_required: true
+  text:
+    model: qwen/qwen3.6-35b-a3b
+    provider_order: [DeepInfra]
+    supports_json_schema: true
+  vision:
+    model: qwen/qwen3.6-35b-a3b
+    provider_order: [DeepInfra]
+    supports_json_schema: true
+
+openrouter-mistral:
+  # Mistral Small 4 (Mistral AI, open weights): a different maker and a larger
+  # model, 119 billion parameters. Mistral's own host is pinned: it is the only
+  # one serving the model, and it supports structured_outputs. (Checked
+  # 2026-10-19 in OpenRouter's endpoint list.)
+  base_url: https://openrouter.ai/api/v1
+  api_key_env: WAA_OPENROUTER_API_KEY
+  api_key_required: true
+  text:
+    model: mistralai/mistral-small-2603
+    provider_order: [Mistral]
+    supports_json_schema: true
+  vision:
+    model: mistralai/mistral-small-2603
+    provider_order: [Mistral]
+    supports_json_schema: true
+
 openrouter-judge:
   # The evaluation judge, not a planner. It marks the agent's runs, so it must
   # come from a different family of models than the planner above -- a model

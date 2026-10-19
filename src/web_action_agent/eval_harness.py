@@ -11,7 +11,8 @@ configuration -- one model, and a library that is either empty (*cold*) or
 the learned one (*warm*). Everything it produces goes in one folder::
 
     runs/eval-openrouter-cold/
-        sweep.json                     what this sweep is, so a restart can check
+        sweep.json                     what this sweep is, so a restart can check,
+                                       and which version of the code it ran
         library/                       the skill library the sweep started with
         mom-annual-leave/
             trial-1/                   one complete run folder, plus verdict.json
@@ -92,10 +93,11 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -123,6 +125,19 @@ from .trace_reader import TraceReadError, read_run
 
 #: The file describing a sweep, written when it starts and checked on restart.
 SWEEP_FILE = "sweep.json"
+
+#: The parts of the repository that decide what a sweep measures: the agent's
+#: code and settings, the benchmark's tasks, and the pinned dependencies. A
+#: change anywhere else -- the results tables every sweep rewrites, the docs --
+#: does not make two sweeps run different code, so it is not looked at.
+CODE_PATHS = ("src", "benchmarks", "pyproject.toml", "uv.lock")
+
+#: Added to a commit when files under :data:`CODE_PATHS` had changes not yet
+#: committed: the commit alone does not say what code ran.
+DIRTY = "-dirty"
+
+#: Stands for the code version of a sweep started before versions were kept.
+NOT_RECORDED = "not recorded"
 
 #: The file holding a trial's mark, written beside its run folder's files.
 VERDICT_FILE = "verdict.json"
@@ -506,9 +521,38 @@ class SweepSpec:
     library: str
     judge_profile: str
     started_at: str = ""
+    vision_model: str | None = None
+    code_versions: tuple[str, ...] = ()
 
     #: The fields a restart must agree on.
-    IDENTITY = ("suite", "profile", "model", "library", "judge_profile")
+    IDENTITY = ("suite", "profile", "model", "library", "judge_profile", "vision_model")
+
+    @classmethod
+    def read(cls, path: Path) -> SweepSpec:
+        """Read a ``sweep.json``, including one written before a field existed.
+
+        Args:
+            path: The file.
+
+        Returns:
+            SweepSpec: The sweep it describes. A file with no list of code
+            versions -- the sweep started before they were kept -- gets
+            :data:`NOT_RECORDED` as its first, so the trials run back then
+            are never credited to whatever code runs next.
+        """
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["code_versions"] = tuple(data.get("code_versions", (NOT_RECORDED,)))
+        return cls(**data)
+
+    def write(self, path: Path) -> None:
+        """Write this as a ``sweep.json``, replacing any earlier one whole.
+
+        Args:
+            path: The file.
+        """
+        partial = path.with_name(f"{path.name}.partial")
+        partial.write_text(json.dumps(asdict(self), indent=2) + "\n", encoding="utf-8")
+        partial.replace(path)
 
     def differences(self, other: SweepSpec) -> list[str]:
         """List how another sweep differs from this one.
@@ -517,13 +561,58 @@ class SweepSpec:
             other: The sweep already recorded in the folder.
 
         Returns:
-            list[str]: One line per differing field, empty if they agree.
+            list[str]: One line per differing field, empty if they agree. A
+            field the folder never recorded (None: the sweep started before
+            the field existed) is not compared, since there is nothing to
+            compare it with.
         """
         return [
             f"{name}: {getattr(other, name)!r} in the folder, {getattr(self, name)!r} now"
             for name in self.IDENTITY
-            if getattr(self, name) != getattr(other, name)
+            if getattr(other, name) is not None and getattr(self, name) != getattr(other, name)
         ]
+
+
+def code_version(package: Path | None = None) -> str:
+    """Name the version of the code that is running, as git knows it.
+
+    Two sweeps compared as "only the model changed" must have run the same
+    code. Recording the version with each sweep makes that something a reader
+    can check in the results, rather than take on trust.
+
+    Args:
+        package: The package folder to ask about. Defaults to this package's
+            own folder, so the answer is about the code actually running.
+
+    Returns:
+        str: The commit, such as ``5c77eae1f2ab``, with :data:`DIRTY` added
+        when files under :data:`CODE_PATHS` had uncommitted changes. Empty
+        when there is no answer: git is not installed, or the package is not
+        running from a git checkout of this project (installed from a wheel,
+        say, where any repository found around it would be someone else's).
+    """
+    package = (package or Path(__file__).parent).resolve()
+
+    def git(*args: str, cwd: Path) -> str:
+        """Run one git command and return what it printed, stripped."""
+        done = subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True, check=True, timeout=10
+        )
+        return done.stdout.strip()
+
+    try:
+        top = Path(git("rev-parse", "--show-toplevel", cwd=package)).resolve()
+        # The checkout must be this project's: the package sits at
+        # src/<package> inside it.
+        if top / "src" / package.name != package:
+            return ""
+        commit = git("rev-parse", "--short=12", "HEAD", cwd=top)
+        # Tracked files only: an untracked file is not imported by anything
+        # committed, and a scratch file left lying about changes nothing.
+        changed = git("status", "--porcelain", "--untracked-files=no", "--", *CODE_PATHS, cwd=top)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return commit + (DIRTY if changed else "")
 
 
 def suite_domains(suite: Suite) -> set[str]:
@@ -734,6 +823,7 @@ class Harness:
         runner: TrialRunner | None = None,
         budget: Budget | None = None,
         log: Callable[[str], None] = print,
+        version: Callable[[], str] = code_version,
     ) -> None:
         """Set up a sweep, without starting anything.
 
@@ -755,6 +845,8 @@ class Harness:
             budget: The money and time ceilings. Defaults to the ones in
                 ``config``.
             log: Where progress lines go.
+            version: Names the version of the code running. Defaults to
+                :func:`code_version`; a test passes a stand-in.
         """
         self.config = config
         self.suite = suite
@@ -771,6 +863,7 @@ class Harness:
         self._runner = runner or self.run_one
         self._budget = budget or Budget.from_config(folder, config)
         self._log = log
+        self._version = version
 
         # Shared between worker threads, always read and written under this
         # condition's lock.
@@ -805,7 +898,23 @@ class Harness:
             library="cold" if self.cold else "warm",
             judge_profile=self.config.judge_profile or "",
             started_at=datetime.now(UTC).isoformat(),
+            # Empty, not None, for a profile with no vision route: that is
+            # recorded as a fact, where None would mean "never recorded".
+            vision_model=profile.vision.model if profile.vision else "",
         )
+
+    def _note_code_version(self) -> None:
+        """Add the running code's version to ``sweep.json``, if it is new there.
+
+        A sweep keeps every version it has run under, in order. One version
+        means every trial ran the same code; more than one means a restart
+        picked up a change partway, and the results tables say so.
+        """
+        spec_path = self.folder / SWEEP_FILE
+        recorded = SweepSpec.read(spec_path)
+        current = self._version() or NOT_RECORDED
+        if current not in recorded.code_versions:
+            replace(recorded, code_versions=(*recorded.code_versions, current)).write(spec_path)
 
     def prepare(self) -> None:
         """Create the sweep folder, or check it holds this same sweep.
@@ -841,7 +950,7 @@ class Harness:
         self.folder.mkdir(parents=True, exist_ok=True)
         spec_path = self.folder / SWEEP_FILE
         if spec_path.exists():
-            recorded = SweepSpec(**json.loads(spec_path.read_text(encoding="utf-8")))
+            recorded = SweepSpec.read(spec_path)
             differences = spec.differences(recorded)
             if differences:
                 raise HarnessError(
@@ -851,7 +960,7 @@ class Harness:
                     + ". Use another folder with --out, or remove this one"
                 )
         else:
-            spec_path.write_text(json.dumps(asdict(spec), indent=2) + "\n", encoding="utf-8")
+            spec.write(spec_path)
         # Kept for the connection test, which waits until it is known that a
         # trial will actually run.
         self._client = client
@@ -903,6 +1012,10 @@ class Harness:
         # finished sweep, run again to rewrite its tables, spends nothing.
         if to_run:
             self._preflight()
+        # Noted only when this start will do something: rerunning a finished
+        # sweep to rewrite its tables runs no code that a version could name.
+        if to_run or to_mark:
+            self._note_code_version()
 
         done = len(plan) - len(to_run) - len(to_mark)
         self._log(

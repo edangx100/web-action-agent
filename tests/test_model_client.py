@@ -197,9 +197,16 @@ def test_shipped_profiles_cover_the_three_documented_run_modes() -> None:
     configured; one of them missing would make it a claim rather than a demo.
     """
     profiles = load_profiles(DEFAULT_PROFILES_PATH)
-    # The three ways to run the agent, plus the evaluation judge, which is a
-    # profile like any other but never drives a run.
-    assert set(profiles) == {"openrouter", "nvidia", "local", "openrouter-judge"}
+    # The three ways to run the agent, the two comparison models, and the
+    # evaluation judge, which is a profile like any other but never drives a run.
+    assert set(profiles) == {
+        "openrouter",
+        "nvidia",
+        "local",
+        "openrouter-qwen",
+        "openrouter-mistral",
+        "openrouter-judge",
+    }
     assert profiles["local"].api_key_required is False
     assert all(p.api_key_env.startswith("WAA_") for p in profiles.values())
     # Committed file, published repository: it holds variable names, not keys.

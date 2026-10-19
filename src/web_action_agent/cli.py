@@ -157,7 +157,7 @@ ProfileOption = Annotated[
     str | None,
     typer.Option(
         flag_for("profile"),
-        help="Endpoint profile to use for this run: openrouter, nvidia, or local.",
+        help="Endpoint profile to use: a name from profiles.yaml, such as openrouter or nvidia.",
     ),
 ]
 

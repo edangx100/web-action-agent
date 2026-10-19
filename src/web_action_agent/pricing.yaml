@@ -50,6 +50,22 @@ openrouter:
     checked: "2026-10-18"
     note: planner vision route; the pinned DeepInfra host, from OpenRouter's endpoint list
 
+openrouter-qwen:
+  # Comparison model; one model serves both routes.
+  qwen/qwen3.6-35b-a3b:
+    input_usd_per_mtok: 0.10
+    output_usd_per_mtok: 0.95
+    checked: "2026-10-19"
+    note: the pinned DeepInfra host, from OpenRouter's endpoint list
+
+openrouter-mistral:
+  # Comparison model; one model serves both routes.
+  mistralai/mistral-small-2603:
+    input_usd_per_mtok: 0.15
+    output_usd_per_mtok: 0.60
+    checked: "2026-10-19"
+    note: the pinned Mistral host, from OpenRouter's endpoint list
+
 openrouter-judge:
   # The evaluation judge. Price of the pinned Google AI Studio host, as listed
   # by OpenRouter's endpoint list for this model. Images are billed as input

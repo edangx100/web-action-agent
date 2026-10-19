@@ -67,7 +67,9 @@ from typing import Any
 from .agreement import DEFAULT_MIN_LABELS, Agreement, measure
 from .budget import JUDGE_LOG, read_calls
 from .eval_harness import (
+    DIRTY,
     LIBRARY_DIR,
+    NOT_RECORDED,
     SERVICE_ERROR,
     SERVICE_ERROR_OUTCOMES,
     SWEEP_FILE,
@@ -82,6 +84,15 @@ COMPARISON_FILE = "README.md"
 
 #: The file comparing each cold sweep with its warm partner.
 COLD_VS_WARM_FILE = "cold_vs_warm.md"
+
+#: The file comparing the same benchmark on different models.
+MULTI_MODEL_FILE = "multi_model.md"
+
+#: How the multi-model comparison's sweeps are told apart from the others:
+#: each arm runs in a folder named ``models-<profile>``. The comparison is a
+#: separate experiment from cold-versus-warm, run on one day on one version
+#: of the code, so its arms are kept in folders of their own.
+MULTI_MODEL_PREFIX = "models-"
 
 #: Where human verdicts are kept, one JSON object per line. Written by the
 #: review tool; each record names a trial folder and the human's verdict.
@@ -919,10 +930,15 @@ def cold_warm_pairs(sweeps: Iterable[SweepResults]) -> list[tuple[SweepResults, 
     Returns:
         list[tuple[SweepResults, SweepResults]]: (cold, warm) pairs that ran
         the same suite on the same profile and model, in name order. A sweep
-        with no partner is left out: there is nothing to compare it with.
+        with no partner is left out: there is nothing to compare it with. So
+        is an arm of the multi-model comparison: it is cold, but no warm
+        library was learnt from it, and on the primary model it would
+        otherwise compete with the cold sweep that one was learnt from.
     """
     by_arm: dict[tuple[Any, ...], dict[str, SweepResults]] = {}
     for sweep in sweeps:
+        if sweep.name.startswith(MULTI_MODEL_PREFIX):
+            continue
         spec = sweep.spec
         key = (spec.get("suite"), spec.get("profile"), spec.get("model"))
         by_arm.setdefault(key, {})[spec.get("library", "")] = sweep
@@ -1057,6 +1073,187 @@ def cold_vs_warm_table(
     return "\n".join(lines) + "\n"
 
 
+# --- Multi-model comparison -----------------------------------------------------------
+
+
+def multi_model_arms(sweeps: Iterable[SweepResults]) -> list[SweepResults]:
+    """Pick out the arms of the multi-model comparison.
+
+    Args:
+        sweeps: Every sweep.
+
+    Returns:
+        list[SweepResults]: The sweeps in folders named
+        ``models-<profile>``, in name order.
+    """
+    return sorted(
+        (s for s in sweeps if s.name.startswith(MULTI_MODEL_PREFIX)), key=lambda s: s.name
+    )
+
+
+def code_versions(spec: dict[str, Any]) -> list[str]:
+    """Read the code versions a sweep ran under, from its ``sweep.json``.
+
+    Args:
+        spec: The contents of the sweep's ``sweep.json``.
+
+    Returns:
+        list[str]: The versions, oldest first. ``[NOT_RECORDED]`` for a
+        sweep started before versions were kept.
+    """
+    return list(spec.get("code_versions", [NOT_RECORDED]))
+
+
+def same_code_check(arms: Sequence[SweepResults]) -> str:
+    """Say whether every arm provably ran the same code, and if not, why not.
+
+    "Same code" is only claimed when it can be shown: each arm ran under one
+    committed version, with no uncommitted changes, and it is the same one
+    for every arm. Anything less is reported as it is.
+
+    Args:
+        arms: The comparison's arms.
+
+    Returns:
+        str: One sentence, starting ``yes:`` or ``no:``.
+    """
+    for arm in arms:
+        versions = code_versions(arm.spec)
+        if not versions:
+            return f"no: {arm.name} has not run any trial yet"
+        if NOT_RECORDED in versions:
+            return f"no: {arm.name} has trials with no recorded code version"
+        if len(versions) > 1:
+            listed = ", ".join(f"`{v}`" for v in versions)
+            return f"no: {arm.name} was restarted on different code partway ({listed})"
+        if versions[0].endswith(DIRTY):
+            return (
+                f"no: {arm.name} ran with changes not yet committed (`{versions[0]}`), "
+                "which the commit alone does not pin down"
+            )
+    commits = sorted({code_versions(arm.spec)[0] for arm in arms})
+    if len(commits) > 1:
+        return "no: the arms ran different commits: " + ", ".join(f"`{c}`" for c in commits)
+    return f"yes: every trial of every arm ran commit `{commits[0]}`, with nothing uncommitted"
+
+
+def _same_setting(arms: Sequence[SweepResults], name: str) -> str:
+    """Say whether every arm has the same value for one ``sweep.json`` field.
+
+    Args:
+        arms: The comparison's arms.
+        name: The field, such as ``suite``.
+
+    Returns:
+        str: ``yes`` with the shared value, or ``no`` with each arm's.
+    """
+    values = {arm.name: arm.spec.get(name) or "none" for arm in arms}
+    if len(set(values.values())) == 1:
+        return f"yes: {next(iter(values.values()))}"
+    return "no: " + ", ".join(f"{arm} {value}" for arm, value in values.items())
+
+
+def _vision_model(spec: dict[str, Any]) -> str:
+    """Write the model a sweep sent screenshots to, for a table cell.
+
+    Args:
+        spec: The contents of the sweep's ``sweep.json``.
+
+    Returns:
+        str: The model in backticks; ``none`` for a profile with no vision
+        route; ``not recorded`` for a sweep from before it was kept.
+    """
+    model = spec.get("vision_model")
+    if model is None:
+        return NOT_RECORDED
+    return f"`{model}`" if model else "none"
+
+
+def multi_model_table(arms: Sequence[SweepResults], results_dir: Path) -> str:
+    """Write the Markdown comparing the same benchmark on different models.
+
+    The claim behind the comparison is that the agent works the same way
+    whichever model it is given, with nothing changed but ``--profile``. So
+    beside the figures, the document checks that claim against what each
+    sweep recorded: the same code, the same tasks, the same judge, and an
+    empty skill library in every arm.
+
+    Args:
+        arms: The comparison's sweeps, from :func:`multi_model_arms`.
+        results_dir: The folder the file will be written to.
+
+    Returns:
+        str: The whole Markdown document.
+    """
+    lines = [
+        "# Multi-model comparison",
+        "",
+        (
+            "The same benchmark on different AI models. Each arm is one sweep with an "
+            "empty skill library (cold), and the arms are meant to differ only in "
+            "`--profile`, which picks the models -- one for steps that read the page as "
+            "text, one for steps that also send a screenshot. The checks below test that "
+            "against what each sweep recorded. Success rate is the mean over rounds of "
+            "trials, with the lowest and highest round. N is how many marked trials each "
+            "figure rests on: with fewer trials per task than the headline cold-vs-warm "
+            "sweeps, these figures are rougher, and the ranges show by how much."
+        ),
+        "",
+        "## Results",
+        "",
+        (
+            "| Arm | Planner model | Screenshot model | Trials marked (N) | Success rate | "
+            "Avg steps | Avg tokens | Avg time | Avg cost (agent) | Code | Started |"
+        ),
+        "|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for arm in arms:
+        rate = success_rate(arm.rows)
+        avg = averages(arm.marked)
+        tasks = len({r.task_id for r in arm.marked})
+        link = _link(results_dir / f"{arm.name}.md", results_dir)
+        code = ", ".join(f"`{v}`" for v in code_versions(arm.spec)) or "none yet"
+        lines.append(
+            f"| [{arm.spec.get('profile', arm.name)}]({link}) | `{arm.spec.get('model', '?')}` | "
+            f"{_vision_model(arm.spec)} | {rate.marked} ({tasks} tasks × "
+            f"{arm.trials_per_task}) | {rate.render()} | {avg.steps:.1f} | "
+            f"{render_tokens(avg.tokens)} | {avg.wall_s:.1f} s | "
+            f"{render_cost(avg.cost_usd, avg.unpriced_calls)} | {code} | "
+            f"{arm.spec.get('started_at', '?')} |"
+        )
+    lines += [
+        "",
+        "## Did only the model change?",
+        "",
+        "| Check | Result |",
+        "|---|---|",
+        f"| Same code in every arm | {same_code_check(arms)} |",
+        f"| Same benchmark suite | {_same_setting(arms, 'suite')} |",
+        f"| Same judge | {_same_setting(arms, 'judge_profile')} |",
+        f"| Empty skill library in every arm | {_same_setting(arms, 'library')} |",
+        "",
+        (
+            "A code version is the git commit the sweep ran, with `-dirty` added when "
+            "the agent's code, settings, tasks or dependencies had changes not yet "
+            "committed. A sweep restarted on newer code lists both versions."
+        ),
+        "",
+        "## Per task",
+        "",
+        "Trials passed out of trials marked, for each arm.",
+        "",
+        "| Task | " + " | ".join(str(arm.spec.get("profile", arm.name)) for arm in arms) + " |",
+        "|---|" + "---|" * len(arms),
+    ]
+    for task_id in sorted({r.task_id for arm in arms for r in arm.marked}):
+        cells = []
+        for arm in arms:
+            rows = [r for r in arm.marked if r.task_id == task_id]
+            cells.append(f"{sum(r.status == PASS for r in rows)}/{len(rows)}")
+        lines.append(f"| {task_id} | " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
 def find_sweeps(runs_root: Path) -> list[Path]:
     """Find every sweep folder directly under a runs folder.
 
@@ -1084,7 +1281,8 @@ def write_results(
     Returns:
         list[Path]: The files written: one per sweep, then the cold-versus-
         warm table when a cold sweep and its warm partner are both there,
-        then the comparison.
+        then the multi-model table when any of its arms is there, then the
+        comparison.
 
     Raises:
         MetricsError: If a folder is not a sweep folder, or any failure in
@@ -1107,6 +1305,11 @@ def write_results(
         cold_vs_warm = results_dir / COLD_VS_WARM_FILE
         cold_vs_warm.write_text(cold_vs_warm_table(pairs, results_dir), encoding="utf-8")
         written.append(cold_vs_warm)
+    arms = multi_model_arms(sweeps)
+    if arms:
+        multi_model = results_dir / MULTI_MODEL_FILE
+        multi_model.write_text(multi_model_table(arms, results_dir), encoding="utf-8")
+        written.append(multi_model)
     comparison = results_dir / COMPARISON_FILE
     comparison.write_text(
         comparison_table(sweeps, results_dir, labels, min_labels), encoding="utf-8"
