@@ -112,6 +112,36 @@ cost, in `results/cold_vs_warm.md`. A cold pass refuses to start on a library
 that holds skills, and a warm pass on one with none for the suite's sites, so
 neither arm can quietly be the other.
 
+### The multi-model comparison
+
+Is the agent any good only on the model it was built with? `scripts/multi_model.sh`
+runs the same benchmark, cold, on several models one after another, changing
+nothing but `--profile`:
+
+```bash
+uv run scripts/multi_model.sh                       # the three profiles below, 2 trials each
+uv run scripts/multi_model.sh --profiles "a b" --trials 1
+```
+
+It refuses to start while the code has uncommitted changes, and every sweep
+records the commit it ran, so `results/multi_model.md` can check, rather than
+assert, that only the model changed. The first comparison, on the live sites on
+19 October 2026:
+
+| Profile | Model (planner and screenshots) | N | Success rate | Avg steps | Avg time | Avg cost per trial |
+|---|---|---|---|---|---|---|
+| `openrouter` | `nvidia/nemotron-3-nano-30b-a3b` (screenshots: `nvidia/nemotron-3.5-super-vl`) | 24 (12 tasks × 2) | 41.7% | 10.8 | 78 s | $0.0042 |
+| `openrouter-qwen` | `qwen/qwen3.6-35b-a3b` | 24 (12 tasks × 2) | 33.3% | 12.6 | 173 s | $0.0174 |
+| `openrouter-glimmer` | `meta/muse-glimmer-30b` | 24 (12 tasks × 2) | 33.3% | 13.0 | 186 s | $0.0127 |
+
+All three ran commit `910e4ad`, with nothing uncommitted, the same suite, the
+same judge and an empty skill library. Three models of about the same size,
+from three makers, land within two trials of each other, and the same six tasks
+(the MOE school finder and the MOM pages) defeat all three: those failures
+belong to the agent and the sites, not to one model. The main model is also the
+cheapest, by three to four times, and the fastest, by more than two. With two trials per task
+these figures are rough; the per-task results are in `results/multi_model.md`.
+
 ### Exit codes
 
 | Code | Meaning |
