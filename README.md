@@ -213,6 +213,41 @@ The server can be on another machine, such as a rented GPU: an SSH tunnel
 (`ssh -N -L 8000:localhost:8000 <gpu-host>`) makes it appear on port 8000
 here, and the profile stays as it is.
 
+### DOM only vs. DOM + screenshots
+
+The agent reads each page as text: the numbered list of things it can click,
+and the page's words. It adds an annotated screenshot only when a cheap rule
+says the text may be missing something: too few elements found, or the
+planner failing on text twice in a row. What does that screenshot buy?
+`scripts/dom_vs_dual.sh` runs the benchmark twice on the same planner model,
+once as usual and once on `openrouter-text`, the same profile with no
+screenshot model, so no image can be sent at all:
+
+```bash
+uv run scripts/dom_vs_dual.sh                 # both arms, 2 trials per task
+```
+
+The first run, on the live sites on 20 October 2026:
+
+| | DOM only | DOM + screenshots when gated in | Change |
+|---|---|---|---|
+| Trials passed (N = 24, 12 tasks × 2) | 10 (41.7%) | 11 (45.8%) | +1 trial |
+| Model calls that carried an image | 0 of 256 | 68 of 235, in 4 trials | |
+| Average cost per trial | $0.0029 | $0.0032 | +10% |
+| Average tokens per trial | 24,966 | 26,036 | +4% |
+| Average time per trial | 77.1 s | 67.9 s | −12% |
+
+Both arms ran commit `b9f8954` with nothing uncommitted, and every request of
+the text-only arm was checked: none carried an image. The rule kept
+screenshots rare: they were sent in 4 trials of 24, on three tasks. They
+plausibly bought one pass (`cpf-total-rate`, 0/2 → 1/2); on the two Ministry
+of Manpower tasks, 53 image calls between them changed nothing. On tasks where
+no image was sent at all, two results moved in opposite directions by chance,
+which is as large as the whole difference. On this suite, then, the
+screenshot channel costs little and buys little: the tasks the agent fails
+are not failed for want of seeing the page. The per-task results are in
+`results/dom_vs_dual.md`.
+
 ### Exit codes
 
 | Code | Meaning |
