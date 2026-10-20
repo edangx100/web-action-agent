@@ -142,49 +142,76 @@ belong to the agent and the sites, not to one model. The main model is also the
 cheapest, by three to four times, and the fastest, by more than two. With two trials per task
 these figures are rough; the per-task results are in `results/multi_model.md`.
 
-### The endpoint modes
+### The endpoint modes: same code, three ways to reach a model
 
-The model is reached through configuration alone, so the same code runs
-against an aggregator, the model maker's own service, and a server you run
-yourself. `scripts/endpoint_modes.sh` shows it: one benchmark task, once per
-profile, with nothing else changed.
+The agent never names a model or a service in its code. Both come from a
+profile, a few lines of configuration picked with `--profile`. So the same code
+runs against an aggregator, the model maker's own service, or a server you run
+yourself, and nothing else changes. That is checked, not claimed: on
+20 October 2026 one benchmark task ran once through each of the three, all on
+one commit, with nothing uncommitted.
+
+```mermaid
+flowchart LR
+    A["The agent<br/>(one commit, unchanged)"] -->|"--profile openrouter"| O["OpenRouter<br/>an aggregator"]
+    A -->|"--profile nvidia"| N["build.nvidia.com<br/>NVIDIA's own service"]
+    A -->|"--profile local"| L["vLLM, self-hosted<br/>at 127.0.0.1:8000"]
+    O --> M1["Nemotron 3 Nano"]
+    N --> M2["Nemotron 3 Nano Omni"]
+    L --> M3["Nemotron 3 Nano<br/>full precision, on an A100 80GB"]
+```
+
+| Profile | Service | Model | Passed | Time | Tokens | Cost |
+|---|---|---|---|---|---|---|
+| `openrouter` | OpenRouter | `nvidia/nemotron-3-nano-30b-a3b` (screenshots: `nvidia/nemotron-3.5-super-vl`) | 1 of 1 | 31.3 s | 6,411 | $0.0007 |
+| `nvidia` | build.nvidia.com | `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` | 1 of 1 | 11.0 s | 2,685 | unknown (free trial access) |
+| `local` | vLLM on a rented A100 80GB, reached through an SSH tunnel | `nvidia/nemotron-3-nano-30b-a3b` (text only) | 1 of 1 | 3.9 s | 2,607 | unknown (self-hosted) |
+
+Every check in `results/endpoint_modes.md` reads yes: the same commit
+(`6decfca`) with nothing uncommitted in every arm, the same task, the same
+judge, an empty skill library, and a different service for each. The
+self-hosted arm has no per-token price, so it reports tokens and time, and its
+dollars as unknown rather than zero; the GPU it ran on cost about $0.85 for the
+session. (The build.nvidia.com profile uses Nano's Omni sibling: the text-only
+Nano was retired there on 2026-09-01.)
+
+To run it yourself:
 
 ```bash
 uv run scripts/endpoint_modes.sh                     # openrouter, nvidia and local
 uv run scripts/endpoint_modes.sh --profiles nvidia   # just one
 ```
 
-| Profile | Service | Key in `.env` |
-|---|---|---|
-| `openrouter` | OpenRouter, an aggregator | `WAA_OPENROUTER_API_KEY` |
-| `nvidia` | build.nvidia.com, NVIDIA's own | `WAA_NVIDIA_API_KEY` |
-| `local` | a vLLM server at `http://127.0.0.1:8000/v1` | none |
+| Profile | Key in `.env` |
+|---|---|
+| `openrouter` | `WAA_OPENROUTER_API_KEY` |
+| `nvidia` | `WAA_NVIDIA_API_KEY` |
+| `local` | none |
 
-The `local` profile expects vLLM serving Nemotron 3 Nano under the name the
-profile asks for. The full-precision model needs an 80 GB GPU (A100 or H100);
-with vLLM 0.12 or later, and the reasoning parser from the model's Hugging Face
-page:
+The `local` profile expects a vLLM server at `http://127.0.0.1:8000/v1`,
+serving Nemotron 3 Nano under the name the profile asks for. The full-precision
+model needs an 80 GB GPU (A100 or H100). Install vLLM 0.12 or later into its
+own environment (on a recent Ubuntu, the system Python refuses `pip install`),
+fetch the reasoning parser from the model's Hugging Face page, and serve:
 
 ```bash
-vllm serve nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 --trust-remote-code \
+uv venv venv && uv pip install --python venv/bin/python "vllm>=0.12.0"
+wget https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16/resolve/main/nano_v3_reasoning_parser.py
+VLLM_USE_FLASHINFER_SAMPLER=0 venv/bin/vllm serve nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 \
+  --trust-remote-code \
   --reasoning-parser-plugin nano_v3_reasoning_parser.py \
   --reasoning-parser nano_v3 --max-model-len 32768 --port 8000 \
   --served-model-name nvidia/nemotron-3-nano-30b-a3b
 ```
 
-On a recent Ubuntu, install vLLM into its own environment rather than the
-system Python (`uv venv` then `uv pip install "vllm>=0.12.0"`). NVIDIA also
-publishes an 8-bit version (`...-FP8`, 33 GB instead of 63 GB) for H100-class
-GPUs.
+`VLLM_USE_FLASHINFER_SAMPLER=0` is needed only where FlashInfer's prebuilt
+kernels are missing and it cannot compile them (no `ninja` or `nvcc`); without
+it, such a server stops at its first request. NVIDIA also publishes an 8-bit
+version (`...-FP8`, 33 GB instead of 63 GB) for H100-class GPUs.
 
 The server can be on another machine, such as a rented GPU: an SSH tunnel
-(`ssh -N -L 8000:localhost:8000 <gpu-host>`) makes it appear on port 8000 here,
-and the profile stays as it is. A self-hosted server has no per-token price, so
-its arm reports tokens and time, and dollars as unknown.
-
-The results land in `results/endpoint_modes.md`, which names each arm's
-service and checks, from what each sweep recorded, that every arm ran the same
-commit with nothing uncommitted.
+(`ssh -N -L 8000:localhost:8000 <gpu-host>`) makes it appear on port 8000
+here, and the profile stays as it is.
 
 ### Exit codes
 

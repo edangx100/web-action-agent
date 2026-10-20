@@ -9,6 +9,9 @@ One row per sweep. A sweep is one pass over the benchmark with one model and one
 | [models-openrouter](models-openrouter.md) | `nvidia/nemotron-3-nano-30b-a3b` | cold | 2 | 41.7% (range 41.7%–41.7% over 2 rounds) | 10.8 | 32,005 | 78.2 s | $0.0042 | 2026-10-19T09:48:13.199547+00:00 |
 | [models-openrouter-glimmer](models-openrouter-glimmer.md) | `meta/muse-glimmer-30b` | cold | 2 | 33.3% (range 33.3%–33.3% over 2 rounds) | 13.0 | 26,953 | 185.6 s | $0.0127 | 2026-10-19T10:17:41.545407+00:00 |
 | [models-openrouter-qwen](models-openrouter-qwen.md) | `qwen/qwen3.6-35b-a3b` | cold | 2 | 33.3% (range 33.3%–33.3% over 2 rounds) | 12.6 | 39,705 | 172.5 s | $0.0174 | 2026-10-19T09:57:13.288964+00:00 |
+| [modes-local](modes-local.md) | `nvidia/nemotron-3-nano-30b-a3b` | cold | 1 | 100.0% (1 round only: no range, treat as a rough guide) | 1.0 | 2,607 | 3.9 s | unknown (1 call unpriced) | 2026-10-20T06:02:59.529748+00:00 |
+| [modes-nvidia](modes-nvidia.md) | `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` | cold | 1 | 100.0% (1 round only: no range, treat as a rough guide) | 1.0 | 2,685 | 11.0 s | unknown (1 call unpriced) | 2026-10-20T06:03:50.992158+00:00 |
+| [modes-openrouter](modes-openrouter.md) | `nvidia/nemotron-3-nano-30b-a3b` | cold | 1 | 100.0% (1 round only: no range, treat as a rough guide) | 2.0 | 6,411 | 31.3 s | $0.0007 | 2026-10-20T06:03:05.786814+00:00 |
 
 ## Judge–human agreement
 
