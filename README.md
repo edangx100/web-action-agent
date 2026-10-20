@@ -161,15 +161,21 @@ uv run scripts/endpoint_modes.sh --profiles nvidia   # just one
 | `local` | a vLLM server at `http://127.0.0.1:8000/v1` | none |
 
 The `local` profile expects vLLM serving Nemotron 3 Nano under the name the
-profile asks for. The model needs an 80 GB GPU (A100 or H100); with vLLM 0.12
-or later, and the reasoning parser from the model's Hugging Face page:
+profile asks for. The full-precision model needs an 80 GB GPU (A100 or H100);
+with vLLM 0.12 or later, and the reasoning parser from the model's Hugging Face
+page:
 
 ```bash
-vllm serve nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8 --trust-remote-code \
+vllm serve nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 --trust-remote-code \
   --reasoning-parser-plugin nano_v3_reasoning_parser.py \
   --reasoning-parser nano_v3 --max-model-len 32768 --port 8000 \
   --served-model-name nvidia/nemotron-3-nano-30b-a3b
 ```
+
+On a recent Ubuntu, install vLLM into its own environment rather than the
+system Python (`uv venv` then `uv pip install "vllm>=0.12.0"`). NVIDIA also
+publishes an 8-bit version (`...-FP8`, 33 GB instead of 63 GB) for H100-class
+GPUs.
 
 The server can be on another machine, such as a rented GPU: an SSH tunnel
 (`ssh -N -L 8000:localhost:8000 <gpu-host>`) makes it appear on port 8000 here,

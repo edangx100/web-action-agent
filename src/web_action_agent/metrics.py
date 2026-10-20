@@ -339,11 +339,15 @@ def render_cost(value: float | None, unpriced_calls: int) -> str:
         unpriced_calls: Calls with no price behind the figure.
 
     Returns:
-        str: e.g. ``$0.0021``, or ``unknown (12 calls unpriced)``. Never a
-        figure built by counting unpriced calls as free.
+        str: e.g. ``$0.0021``, or ``unknown (12 calls unpriced)``, or
+        ``unknown (1 call unpriced)``. Never a figure built by counting
+        unpriced calls as free.
     """
     if value is None:
-        return f"unknown ({unpriced_calls} calls unpriced)" if unpriced_calls else "unknown"
+        if not unpriced_calls:
+            return "unknown"
+        calls = "call" if unpriced_calls == 1 else "calls"
+        return f"unknown ({unpriced_calls} {calls} unpriced)"
     return f"${value:.4f}"
 
 
@@ -1345,7 +1349,7 @@ def endpoint_modes_table(arms: Sequence[SweepResults], results_dir: Path) -> str
             "are meant to differ only in `--profile`; the checks below test that against "
             "what each sweep recorded. Tokens and time are always shown. Dollars are shown "
             "only where every call had a price: a self-hosted server has no per-token "
-            "price, and free credits are not one, so those arms read unknown by design."
+            "price, and free trial access is not one, so those arms read unknown by design."
         ),
         "",
         "## Results",

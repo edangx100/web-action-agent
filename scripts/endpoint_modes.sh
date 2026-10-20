@@ -28,10 +28,11 @@
 # Each profile needs its key in .env (WAA_OPENROUTER_API_KEY, WAA_NVIDIA_API_KEY;
 # the local server needs none), and the local profile needs a vLLM server
 # listening on port 8000, serving the model under the name the profile uses.
-# On an 80 GB GPU (A100 or H100), with vLLM 0.12 or later and the reasoning
-# parser downloaded from the model's Hugging Face page:
+# The full-precision model needs an 80 GB GPU (A100 or H100); with vLLM 0.12
+# or later and the reasoning parser downloaded from the model's Hugging Face
+# page:
 #
-#   vllm serve nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8 --trust-remote-code \
+#   vllm serve nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 --trust-remote-code \
 #     --reasoning-parser-plugin nano_v3_reasoning_parser.py \
 #     --reasoning-parser nano_v3 --max-model-len 32768 --port 8000 \
 #     --served-model-name nvidia/nemotron-3-nano-30b-a3b

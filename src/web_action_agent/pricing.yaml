@@ -77,9 +77,10 @@ openrouter-judge:
     note: judge; Google AI Studio standard tier (not flex or priority)
 
 nvidia:
-  # First-party endpoint. Calls are drawn from the account's free credits,
-  # which are a promotional allowance, not a price -- so, by rule 3 above,
-  # left empty: the arm's dollars read "unknown".
+  # First-party endpoint. Calls are made under the service's free trial
+  # access, which is limited by request rate, not paid per token -- a trial
+  # arrangement, not a price -- so, by rule 3 above, left empty: the arm's
+  # dollars read "unknown".
   nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:
     input_usd_per_mtok:
     output_usd_per_mtok:

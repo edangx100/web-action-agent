@@ -181,6 +181,7 @@ def test_one_unpriced_trial_makes_the_average_cost_unknown() -> None:
 
 def test_cost_renders_as_unknown_rather_than_inventing_a_figure() -> None:
     assert render_cost(None, 6) == "unknown (6 calls unpriced)"
+    assert render_cost(None, 1) == "unknown (1 call unpriced)", "one call, singular"
     assert render_cost(0.00213, 0) == "$0.0021"
 
 
