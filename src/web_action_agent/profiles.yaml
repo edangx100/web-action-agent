@@ -100,6 +100,23 @@ local:
     supports_json_schema: true
   vision: null
 
+openrouter-text:
+  # The primary profile with its screenshot channel removed: the same service,
+  # key, planner model and pinned host as `openrouter`, and no vision route.
+  # With no vision route the agent sends no screenshot at all -- the screenshot
+  # gate says no before it considers anything else, and the model client
+  # refuses an image for a profile that has none. That makes this the DOM-only
+  # arm of the comparison between reading pages as text alone and text plus
+  # screenshots when they are gated in.
+  base_url: https://openrouter.ai/api/v1
+  api_key_env: WAA_OPENROUTER_API_KEY
+  api_key_required: true
+  text:
+    model: nvidia/nemotron-3-nano-30b-a3b
+    provider_order: [Nebius]
+    supports_json_schema: true
+  vision: null
+
 # --- Comparison models ---------------------------------------------------------
 #
 # Two more open-weight models, for the multi-model comparison: the same

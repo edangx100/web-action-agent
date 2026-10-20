@@ -77,7 +77,7 @@ from .eval_harness import (
 )
 from .judge import FAIL, FAILURE_CATEGORIES, PASS
 from .skill_store import SkillStore, SkillStoreError
-from .trace import ACTION_LOG, OUTCOME_FILE
+from .trace import ACTION_LOG, COST_LOG, OUTCOME_FILE
 
 #: The file comparing every sweep, in the results folder.
 COMPARISON_FILE = "README.md"
@@ -102,9 +102,16 @@ ENDPOINT_MODES_FILE = "endpoint_modes.md"
 #: ``modes-<profile>``. Kept apart for the same reason as the multi-model ones.
 ENDPOINT_MODES_PREFIX = "modes-"
 
+#: The file comparing reading pages as text alone with text plus screenshots.
+DOM_VS_DUAL_FILE = "dom_vs_dual.md"
+
+#: The folder prefix of that comparison's sweeps, one per profile:
+#: ``modality-<profile>``.
+MODALITY_PREFIX = "modality-"
+
 #: Every experiment kept in folders of its own. None of their sweeps is a
 #: cold-versus-warm baseline, even when cold on the primary model.
-EXPERIMENT_PREFIXES = (MULTI_MODEL_PREFIX, ENDPOINT_MODES_PREFIX)
+EXPERIMENT_PREFIXES = (MULTI_MODEL_PREFIX, ENDPOINT_MODES_PREFIX, MODALITY_PREFIX)
 
 #: Where human verdicts are kept, one JSON object per line. Written by the
 #: review tool; each record names a trial folder and the human's verdict.
@@ -1395,6 +1402,243 @@ def endpoint_modes_table(arms: Sequence[SweepResults], results_dir: Path) -> str
     return "\n".join(lines) + "\n"
 
 
+# --- DOM-only versus dual-modality -----------------------------------------------------
+
+
+def modality_arms(sweeps: Iterable[SweepResults]) -> list[SweepResults]:
+    """Pick out the sweeps of the DOM-only versus dual-modality comparison.
+
+    Args:
+        sweeps: Every sweep.
+
+    Returns:
+        list[SweepResults]: The sweeps in folders named
+        ``modality-<profile>``, in name order.
+    """
+    return sorted((s for s in sweeps if s.name.startswith(MODALITY_PREFIX)), key=lambda s: s.name)
+
+
+def is_dom_only(spec: dict[str, Any]) -> bool:
+    """Say whether a sweep ran on text alone, by its record.
+
+    Args:
+        spec: The contents of the sweep's ``sweep.json``.
+
+    Returns:
+        bool: True when its profile had no screenshot model -- recorded as
+        an empty one -- so no screenshot could be sent. False for a sweep
+        with a screenshot model, or one from before it was recorded.
+    """
+    return spec.get("vision_model") == ""
+
+
+@dataclass(frozen=True)
+class ImageCount:
+    """How many model calls carried an image, over some trials.
+
+    Read from each call's own record, whose ``vision`` flag is worked out from
+    the request that was sent -- whether any message had an image part -- so
+    it counts what went to the model, not what the agent meant to send.
+
+    Attributes:
+        with_image: Calls whose request carried an image.
+        calls: Every call.
+        trials: Trials with at least one call that carried an image.
+    """
+
+    with_image: int
+    calls: int
+    trials: int
+
+
+def count_images(rows: Iterable[TrialRow]) -> ImageCount:
+    """Count the model calls that carried an image, over some trials.
+
+    Args:
+        rows: The trials, each with its run folder.
+
+    Returns:
+        ImageCount: The counts. A trial whose call log cannot be read counts
+        as having made no calls.
+    """
+    with_image = calls = trials = 0
+    for row in rows:
+        records = read_calls(row.folder / COST_LOG)
+        images = sum(1 for record in records if record.vision)
+        with_image += images
+        calls += len(records)
+        trials += images > 0
+    return ImageCount(with_image, calls, trials)
+
+
+def _arm_kind(spec: dict[str, Any]) -> str:
+    """Name an arm by how it sees the page, for the table.
+
+    Args:
+        spec: The contents of the sweep's ``sweep.json``.
+
+    Returns:
+        str: ``DOM only`` or ``DOM + screenshots when gated in``.
+    """
+    return "DOM only" if is_dom_only(spec) else "DOM + screenshots when gated in"
+
+
+def _no_images_check(arms: Sequence[SweepResults]) -> str:
+    """Check that no request in a DOM-only arm carried an image.
+
+    Args:
+        arms: The comparison's arms.
+
+    Returns:
+        str: ``yes`` with the number of calls checked, or ``no`` with the
+        count that carried one. Says so when there is no DOM-only arm.
+    """
+    dom_only = [arm for arm in arms if is_dom_only(arm.spec)]
+    if not dom_only:
+        return "no DOM-only arm"
+    count = count_images(row for arm in dom_only for row in arm.rows)
+    if count.with_image:
+        return f"no: {count.with_image} of {count.calls} calls carried an image"
+    return f"yes: 0 of {count.calls} calls carried an image"
+
+
+def _tradeoff_lines(dual: SweepResults, dom: SweepResults) -> list[str]:
+    """Write the change from text alone to text plus screenshots.
+
+    Args:
+        dual: The arm that could send screenshots.
+        dom: The arm on text alone.
+
+    Returns:
+        list[str]: Markdown lines: what the screenshots bought, and what
+        they cost.
+    """
+    dual_rate, dom_rate = success_rate(dual.rows), success_rate(dom.rows)
+    dual_avg, dom_avg = averages(dual.marked), averages(dom.marked)
+    points = (
+        f"{(dual_rate.mean - dom_rate.mean) * 100:+.1f} points"
+        if dual_rate.rounds and dom_rate.rounds
+        else "unknown"
+    )
+    return [
+        "## What the screenshots bought, and what they cost",
+        "",
+        "The change from text alone to text plus screenshots, per trial.",
+        "",
+        "| Measure | DOM only | DOM + screenshots | Change |",
+        "|---|---|---|---|",
+        f"| Success rate | {dom_rate.render()} | {dual_rate.render()} | {points} |",
+        (
+            f"| Trials passed | {dom_rate.passed} of {dom_rate.marked} | "
+            f"{dual_rate.passed} of {dual_rate.marked} | |"
+        ),
+        (
+            f"| Average steps | {dom_avg.steps:.1f} | {dual_avg.steps:.1f} | "
+            f"{_change(dom_avg.steps, dual_avg.steps)} |"
+        ),
+        (
+            f"| Average tokens | {render_tokens(dom_avg.tokens)} | {render_tokens(dual_avg.tokens)} | "
+            f"{_change(dom_avg.tokens, dual_avg.tokens)} |"
+        ),
+        (
+            f"| Average time | {dom_avg.wall_s:.1f} s | {dual_avg.wall_s:.1f} s | "
+            f"{_change(dom_avg.wall_s, dual_avg.wall_s, ' s')} |"
+        ),
+        (
+            f"| Average cost (agent) | {render_cost(dom_avg.cost_usd, dom_avg.unpriced_calls)} | "
+            f"{render_cost(dual_avg.cost_usd, dual_avg.unpriced_calls)} | "
+            f"{_cost_change(dom_avg, dual_avg)} |"
+        ),
+    ]
+
+
+def dom_vs_dual_table(arms: Sequence[SweepResults], results_dir: Path) -> str:
+    """Write the Markdown comparing text alone with text plus screenshots.
+
+    The agent reads each page as text -- the numbered list of things to
+    click, and the page's words -- and adds a screenshot only when a cheap
+    rule says the text may be missing something. This table measures what
+    that buys: the same suite, on the same planner model, once with the
+    screenshot channel removed and once with it gated as usual.
+
+    Args:
+        arms: The comparison's sweeps, from :func:`modality_arms`.
+        results_dir: The folder the file will be written to.
+
+    Returns:
+        str: The whole Markdown document.
+    """
+    lines = [
+        "# DOM only vs. DOM + screenshots",
+        "",
+        (
+            "The same benchmark on the same planner model, twice. **DOM only**: the page "
+            "as text alone -- the numbered list of things to click, and the page's words "
+            "-- with the screenshot channel removed (a profile with no screenshot model). "
+            "**DOM + screenshots**: the usual setting, where a screenshot is added only "
+            "when few elements were found or the planner keeps failing on text. An image "
+            "counts as sent only when the request that went to the model carried one."
+        ),
+        "",
+        "## Results",
+        "",
+        (
+            "| Arm | Sees the page as | Planner model | Screenshot model | Trials marked (N) | "
+            "Success rate | Calls with an image | Avg steps | Avg tokens | Avg time | "
+            "Avg cost (agent) | Code |"
+        ),
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for arm in arms:
+        rate = success_rate(arm.rows)
+        avg = averages(arm.marked)
+        images = count_images(arm.marked)
+        tasks = len({r.task_id for r in arm.marked})
+        link = _link(results_dir / f"{arm.name}.md", results_dir)
+        code = ", ".join(f"`{v}`" for v in code_versions(arm.spec)) or "none yet"
+        lines.append(
+            f"| [{arm.spec.get('profile', arm.name)}]({link}) | {_arm_kind(arm.spec)} | "
+            f"`{arm.spec.get('model', '?')}` | {_vision_model(arm.spec)} | "
+            f"{rate.marked} ({tasks} tasks × {arm.trials_per_task}) | {rate.render()} | "
+            f"{images.with_image} of {images.calls} (in {images.trials} trials) | "
+            f"{avg.steps:.1f} | {render_tokens(avg.tokens)} | {avg.wall_s:.1f} s | "
+            f"{render_cost(avg.cost_usd, avg.unpriced_calls)} | {code} |"
+        )
+    dom = [arm for arm in arms if is_dom_only(arm.spec)]
+    dual = [arm for arm in arms if not is_dom_only(arm.spec)]
+    if len(dom) == 1 and len(dual) == 1:
+        lines += ["", *_tradeoff_lines(dual[0], dom[0])]
+    lines += [
+        "",
+        "## Did only the screenshot channel change?",
+        "",
+        "| Check | Result |",
+        "|---|---|",
+        f"| No image in any request of the DOM-only arm | {_no_images_check(arms)} |",
+        f"| Same code in every arm | {same_code_check(arms)} |",
+        f"| Same planner model | {_same_setting(arms, 'model')} |",
+        f"| Same benchmark suite | {_same_setting(arms, 'suite')} |",
+        f"| Same judge | {_same_setting(arms, 'judge_profile')} |",
+        f"| Empty skill library in every arm | {_same_setting(arms, 'library')} |",
+        "",
+        "## Per task",
+        "",
+        "Trials passed out of trials marked, and in brackets the calls that carried an image.",
+        "",
+        "| Task | " + " | ".join(str(arm.spec.get("profile", arm.name)) for arm in arms) + " |",
+        "|---|" + "---|" * len(arms),
+    ]
+    for task_id in sorted({r.task_id for arm in arms for r in arm.marked}):
+        cells = []
+        for arm in arms:
+            rows = [r for r in arm.marked if r.task_id == task_id]
+            images = count_images(rows)
+            passed = sum(r.status == PASS for r in rows)
+            cells.append(f"{passed}/{len(rows)} ({images.with_image})")
+        lines.append(f"| {task_id} | " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
 def find_sweeps(runs_root: Path) -> list[Path]:
     """Find every sweep folder directly under a runs folder.
 
@@ -1423,7 +1667,8 @@ def write_results(
         list[Path]: The files written: one per sweep, then the cold-versus-
         warm table when a cold sweep and its warm partner are both there,
         then the multi-model table when any of its arms is there, then the
-        endpoint-modes table likewise, then the comparison.
+        endpoint-modes and DOM-versus-dual tables likewise, then the
+        comparison.
 
     Raises:
         MetricsError: If a folder is not a sweep folder, or any failure in
@@ -1456,6 +1701,11 @@ def write_results(
         endpoint_modes = results_dir / ENDPOINT_MODES_FILE
         endpoint_modes.write_text(endpoint_modes_table(modes, results_dir), encoding="utf-8")
         written.append(endpoint_modes)
+    modality = modality_arms(sweeps)
+    if modality:
+        dom_vs_dual = results_dir / DOM_VS_DUAL_FILE
+        dom_vs_dual.write_text(dom_vs_dual_table(modality, results_dir), encoding="utf-8")
+        written.append(dom_vs_dual)
     comparison = results_dir / COMPARISON_FILE
     comparison.write_text(
         comparison_table(sweeps, results_dir, labels, min_labels), encoding="utf-8"
