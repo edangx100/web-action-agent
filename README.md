@@ -142,6 +142,44 @@ belong to the agent and the sites, not to one model. The main model is also the
 cheapest, by three to four times, and the fastest, by more than two. With two trials per task
 these figures are rough; the per-task results are in `results/multi_model.md`.
 
+### The endpoint modes
+
+The model is reached through configuration alone, so the same code runs
+against an aggregator, the model maker's own service, and a server you run
+yourself. `scripts/endpoint_modes.sh` shows it: one benchmark task, once per
+profile, with nothing else changed.
+
+```bash
+uv run scripts/endpoint_modes.sh                     # openrouter, nvidia and local
+uv run scripts/endpoint_modes.sh --profiles nvidia   # just one
+```
+
+| Profile | Service | Key in `.env` |
+|---|---|---|
+| `openrouter` | OpenRouter, an aggregator | `WAA_OPENROUTER_API_KEY` |
+| `nvidia` | build.nvidia.com, NVIDIA's own | `WAA_NVIDIA_API_KEY` |
+| `local` | a vLLM server at `http://127.0.0.1:8000/v1` | none |
+
+The `local` profile expects vLLM serving Nemotron 3 Nano under the name the
+profile asks for. The model needs an 80 GB GPU (A100 or H100); with vLLM 0.12
+or later, and the reasoning parser from the model's Hugging Face page:
+
+```bash
+vllm serve nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8 --trust-remote-code \
+  --reasoning-parser-plugin nano_v3_reasoning_parser.py \
+  --reasoning-parser nano_v3 --max-model-len 32768 --port 8000 \
+  --served-model-name nvidia/nemotron-3-nano-30b-a3b
+```
+
+The server can be on another machine, such as a rented GPU: an SSH tunnel
+(`ssh -N -L 8000:localhost:8000 <gpu-host>`) makes it appear on port 8000 here,
+and the profile stays as it is. A self-hosted server has no per-token price, so
+its arm reports tokens and time, and dollars as unknown.
+
+The results land in `results/endpoint_modes.md`, which names each arm's
+service and checks, from what each sweep recorded, that every arm ran the same
+commit with nothing uncommitted.
+
 ### Exit codes
 
 | Code | Meaning |

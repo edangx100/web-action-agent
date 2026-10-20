@@ -94,6 +94,18 @@ MULTI_MODEL_FILE = "multi_model.md"
 #: of the code, so its arms are kept in folders of their own.
 MULTI_MODEL_PREFIX = "models-"
 
+#: The file comparing the ways of reaching a model: an aggregator, the
+#: maker's own service, and a server run by the user.
+ENDPOINT_MODES_FILE = "endpoint_modes.md"
+
+#: The folder prefix of the endpoint-modes check's sweeps, one per profile:
+#: ``modes-<profile>``. Kept apart for the same reason as the multi-model ones.
+ENDPOINT_MODES_PREFIX = "modes-"
+
+#: Every experiment kept in folders of its own. None of their sweeps is a
+#: cold-versus-warm baseline, even when cold on the primary model.
+EXPERIMENT_PREFIXES = (MULTI_MODEL_PREFIX, ENDPOINT_MODES_PREFIX)
+
 #: Where human verdicts are kept, one JSON object per line. Written by the
 #: review tool; each record names a trial folder and the human's verdict.
 HUMAN_LABELS_FILE = "human_labels.jsonl"
@@ -931,13 +943,14 @@ def cold_warm_pairs(sweeps: Iterable[SweepResults]) -> list[tuple[SweepResults, 
         list[tuple[SweepResults, SweepResults]]: (cold, warm) pairs that ran
         the same suite on the same profile and model, in name order. A sweep
         with no partner is left out: there is nothing to compare it with. So
-        is an arm of the multi-model comparison: it is cold, but no warm
-        library was learnt from it, and on the primary model it would
-        otherwise compete with the cold sweep that one was learnt from.
+        is a sweep of another experiment (see :data:`EXPERIMENT_PREFIXES`):
+        it is cold, but no warm library was learnt from it, and on the
+        primary model it would otherwise compete with the cold sweep that
+        one was learnt from.
     """
     by_arm: dict[tuple[Any, ...], dict[str, SweepResults]] = {}
     for sweep in sweeps:
-        if sweep.name.startswith(MULTI_MODEL_PREFIX):
+        if sweep.name.startswith(EXPERIMENT_PREFIXES):
             continue
         spec = sweep.spec
         key = (spec.get("suite"), spec.get("profile"), spec.get("model"))
@@ -1254,6 +1267,130 @@ def multi_model_table(arms: Sequence[SweepResults], results_dir: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
+# --- Endpoint modes ---------------------------------------------------------------------
+
+
+def endpoint_mode_arms(sweeps: Iterable[SweepResults]) -> list[SweepResults]:
+    """Pick out the sweeps of the endpoint-modes check.
+
+    Args:
+        sweeps: Every sweep.
+
+    Returns:
+        list[SweepResults]: The sweeps in folders named ``modes-<profile>``,
+        in name order.
+    """
+    return sorted(
+        (s for s in sweeps if s.name.startswith(ENDPOINT_MODES_PREFIX)), key=lambda s: s.name
+    )
+
+
+def _service(spec: dict[str, Any]) -> str:
+    """Write the service a sweep's calls went to, for a table cell.
+
+    Args:
+        spec: The contents of the sweep's ``sweep.json``.
+
+    Returns:
+        str: The base URL in backticks, or ``not recorded`` for a sweep
+        from before it was kept.
+    """
+    url = spec.get("base_url")
+    return f"`{url}`" if url else NOT_RECORDED
+
+
+def _different_services(arms: Sequence[SweepResults]) -> str:
+    """Say whether every arm reached a service of its own.
+
+    Args:
+        arms: The check's arms.
+
+    Returns:
+        str: ``yes`` with the number of services, or ``no`` naming the arms
+        that shared one -- two arms on one service would show nothing about
+        reaching different ones.
+    """
+    by_url: dict[str, list[str]] = {}
+    for arm in arms:
+        by_url.setdefault(str(arm.spec.get("base_url") or NOT_RECORDED), []).append(arm.name)
+    shared = [names for names in by_url.values() if len(names) > 1]
+    if shared:
+        return "no: " + "; ".join(" and ".join(names) + " used one service" for names in shared)
+    return f"yes: {len(arms)} services"
+
+
+def endpoint_modes_table(arms: Sequence[SweepResults], results_dir: Path) -> str:
+    """Write the Markdown comparing the ways of reaching a model.
+
+    The claim behind it: the agent reaches a model through configuration
+    alone, so the same code runs against an aggregator, the model maker's own
+    service, and a server the user runs, with only ``--profile`` changed. As
+    with the multi-model table, the claim is checked against what each sweep
+    recorded rather than asserted.
+
+    Args:
+        arms: The check's sweeps, from :func:`endpoint_mode_arms`.
+        results_dir: The folder the file will be written to.
+
+    Returns:
+        str: The whole Markdown document.
+    """
+    lines = [
+        "# Endpoint modes",
+        "",
+        (
+            "The same task and the same code, reaching a model three ways: through an "
+            "aggregator, through the model maker's own service, and through a server run "
+            "by the user. Each arm is one sweep with an empty skill library, and the arms "
+            "are meant to differ only in `--profile`; the checks below test that against "
+            "what each sweep recorded. Tokens and time are always shown. Dollars are shown "
+            "only where every call had a price: a self-hosted server has no per-token "
+            "price, and free credits are not one, so those arms read unknown by design."
+        ),
+        "",
+        "## Results",
+        "",
+        (
+            "| Arm | Service | Planner model | Screenshot model | Tasks | Passed | Avg steps | "
+            "Avg tokens | Avg time | Avg cost (agent) | Code | Started |"
+        ),
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for arm in arms:
+        rate = success_rate(arm.rows)
+        avg = averages(arm.marked)
+        tasks = ", ".join(sorted({r.task_id for r in arm.rows})) or "none yet"
+        link = _link(results_dir / f"{arm.name}.md", results_dir)
+        code = ", ".join(f"`{v}`" for v in code_versions(arm.spec)) or "none yet"
+        lines.append(
+            f"| [{arm.spec.get('profile', arm.name)}]({link}) | {_service(arm.spec)} | "
+            f"`{arm.spec.get('model', '?')}` | {_vision_model(arm.spec)} | {tasks} | "
+            f"{rate.passed} of {rate.marked} | {avg.steps:.1f} | {render_tokens(avg.tokens)} | "
+            f"{avg.wall_s:.1f} s | {render_cost(avg.cost_usd, avg.unpriced_calls)} | {code} | "
+            f"{arm.spec.get('started_at', '?')} |"
+        )
+    lines += [
+        "",
+        "## Did only the endpoint change?",
+        "",
+        "| Check | Result |",
+        "|---|---|",
+        f"| Same code in every arm | {same_code_check(arms)} |",
+        f"| Same tasks | {_same_setting(arms, 'suite')} |",
+        f"| Same judge | {_same_setting(arms, 'judge_profile')} |",
+        f"| Empty skill library in every arm | {_same_setting(arms, 'library')} |",
+        f"| A different service in every arm | {_different_services(arms)} |",
+        "",
+        (
+            "A code version is the git commit the sweep ran, with `-dirty` added when "
+            "the agent's code, settings, tasks or dependencies had changes not yet "
+            "committed. One commit, clean, in every arm is what shows that only the "
+            "configuration changed: keys live in `.env`, which is not part of the code."
+        ),
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def find_sweeps(runs_root: Path) -> list[Path]:
     """Find every sweep folder directly under a runs folder.
 
@@ -1282,7 +1419,7 @@ def write_results(
         list[Path]: The files written: one per sweep, then the cold-versus-
         warm table when a cold sweep and its warm partner are both there,
         then the multi-model table when any of its arms is there, then the
-        comparison.
+        endpoint-modes table likewise, then the comparison.
 
     Raises:
         MetricsError: If a folder is not a sweep folder, or any failure in
@@ -1310,6 +1447,11 @@ def write_results(
         multi_model = results_dir / MULTI_MODEL_FILE
         multi_model.write_text(multi_model_table(arms, results_dir), encoding="utf-8")
         written.append(multi_model)
+    modes = endpoint_mode_arms(sweeps)
+    if modes:
+        endpoint_modes = results_dir / ENDPOINT_MODES_FILE
+        endpoint_modes.write_text(endpoint_modes_table(modes, results_dir), encoding="utf-8")
+        written.append(endpoint_modes)
     comparison = results_dir / COMPARISON_FILE
     comparison.write_text(
         comparison_table(sweeps, results_dir, labels, min_labels), encoding="utf-8"

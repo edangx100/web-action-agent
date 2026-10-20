@@ -77,18 +77,14 @@ openrouter-judge:
     note: judge; Google AI Studio standard tier (not flex or priority)
 
 nvidia:
-  # First-party endpoint.
-  nvidia/nemotron-3-nano-30b-a3b:
-    input_usd_per_mtok:
-    output_usd_per_mtok:
-    checked:
-    note: first-party text route
-
+  # First-party endpoint. Calls are drawn from the account's free credits,
+  # which are a promotional allowance, not a price -- so, by rule 3 above,
+  # left empty: the arm's dollars read "unknown".
   nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:
     input_usd_per_mtok:
     output_usd_per_mtok:
     checked:
-    note: first-party vision route
+    note: first-party; serves both the text and the vision route
 
 local:
   # Self-hosted vLLM on your own hardware. There is no per-token price here at

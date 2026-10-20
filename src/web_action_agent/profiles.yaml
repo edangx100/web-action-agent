@@ -33,8 +33,9 @@
 # Model choice: the planner is Nemotron 3 Nano throughout — a small
 # open-weight model, so the local profile serves the same weights as the hosted
 # ones. Observations carrying a screenshot go to a vision-language model: on
-# the first-party profile, Nano's own Omni sibling; on OpenRouter, Nemotron 3.5
-# Super VL, because there Omni is offered only on an unreliable free tier.
+# OpenRouter, Nemotron 3.5 Super VL, because there Nano's Omni sibling is
+# offered only on an unreliable free tier. On the first-party profile, the
+# Omni sibling serves both routes (see that profile for why).
 
 openrouter:
   # Primary development path: one key, many models, easy comparison sweeps.
@@ -67,11 +68,18 @@ openrouter:
 nvidia:
   # First-party fallback: fewer models, but one vendor, no routing layer, and
   # therefore nothing to pin. Where the aggregator misbehaves, this arbitrates.
+  #
+  # Nano's Omni sibling serves both routes: it reads text as well as images.
+  # The text-only Nano was retired here on 2026-09-01 ("410 Gone"), and the
+  # renamed listing, nvidia/nemotron-nano-3-30b-a3b, answers "not found for
+  # account". Omni is the Nemotron 3 Nano family member still served. It is
+  # busy at times ("503: request limit reached"); the client waits that out.
+  # (Checked 2026-10-20 against this endpoint's model list.)
   base_url: https://integrate.api.nvidia.com/v1
   api_key_env: WAA_NVIDIA_API_KEY
   api_key_required: true
   text:
-    model: nvidia/nemotron-3-nano-30b-a3b
+    model: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
     provider_order: []
     supports_json_schema: true
   vision:

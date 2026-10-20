@@ -382,8 +382,11 @@ def test_unpriced_routes_are_listed() -> None:
     # Every route a published sweep uses has a price: planner text, planner
     # vision, and judge. A free route could not be counted against the ceiling.
     assert unpriced_routes([load_profile("openrouter"), load_profile("openrouter-judge")]) == []
-    # The first-party profile's prices are not recorded, and it says so.
-    assert len(unpriced_routes([load_profile("nvidia")])) == 2
+    # The first-party profile's prices are not recorded, and it says so --
+    # once, since one model serves both of its routes.
+    assert unpriced_routes([load_profile("nvidia")]) == [
+        "nvidia -> nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    ]
 
 
 # --- The command -----------------------------------------------------------------

@@ -525,6 +525,12 @@ class SweepSpec:
         started_at: When the sweep was first started, RFC 3339 in UTC. Kept
             from the first start, because published results must say when the
             live sites were visited.
+        vision_model: The model screenshots went to; empty for a profile
+            with none. None in a sweep started before it was recorded.
+        code_versions: Every version of the code the sweep ran trials on,
+            oldest first (see :func:`code_version`).
+        base_url: The service the planner's calls went to. None in a sweep
+            started before it was recorded.
     """
 
     suite: str
@@ -535,9 +541,18 @@ class SweepSpec:
     started_at: str = ""
     vision_model: str | None = None
     code_versions: tuple[str, ...] = ()
+    base_url: str | None = None
 
     #: The fields a restart must agree on.
-    IDENTITY = ("suite", "profile", "model", "library", "judge_profile", "vision_model")
+    IDENTITY = (
+        "suite",
+        "profile",
+        "model",
+        "library",
+        "judge_profile",
+        "vision_model",
+        "base_url",
+    )
 
     @classmethod
     def read(cls, path: Path) -> SweepSpec:
@@ -913,6 +928,9 @@ class Harness:
             # Empty, not None, for a profile with no vision route: that is
             # recorded as a fact, where None would mean "never recorded".
             vision_model=profile.vision.model if profile.vision else "",
+            # Which service the calls went to: the same model can be served
+            # by an aggregator, its maker, or a server on this machine.
+            base_url=profile.base_url,
         )
 
     def _note_code_version(self) -> None:

@@ -61,30 +61,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if ! command -v "$WAA" > /dev/null 2>&1; then
-  echo "multi_model: cannot find the '$WAA' command. Run this from the project" \
-    "folder as: uv run scripts/multi_model.sh ... (or set WAA to the command's path)." >&2
-  exit 2
-fi
-
-# Refuse uncommitted changes before any money is spent. The paths are the ones
-# the harness checks when it records a sweep's code version: the results
-# tables each arm rewrites are left out, or the second arm would never start.
-repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if changes="$("$GIT" -C "$repo" status --porcelain --untracked-files=no \
-    -- src benchmarks pyproject.toml uv.lock 2>/dev/null)"; then
-  if [[ -n "$changes" ]]; then
-    echo "multi_model: commit these changes first, so every arm runs one known commit:" >&2
-    echo "$changes" >&2
-    exit 2
-  fi
-else
-  echo "multi_model: warning: not a git checkout, so the results cannot show" \
-    "that every arm ran the same code." >&2
-fi
-
-# step: runs one step, with retries (see step.sh).
-source "$(dirname "${BASH_SOURCE[0]}")/step.sh"
+# require_waa, require_committed, step: see helpers.sh.
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
+require_waa
+require_committed
 
 # One arm per profile, one after another, so each arm has the websites to itself.
 for profile in $profiles; do

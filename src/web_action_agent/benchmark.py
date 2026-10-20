@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -426,6 +426,36 @@ class Suite:
             if candidate.id == task_id:
                 return candidate
         raise KeyError(task_id)
+
+    def only(self, task_ids: tuple[str, ...]) -> Suite:
+        """Narrow the suite to some of its tasks, for a sweep that needs only those.
+
+        The narrowed suite gets its own name -- the suite's, with the tasks in
+        brackets, such as ``sg-gov-v1[cpf-employee-share]`` -- because a sweep
+        records the suite's name and refuses to carry on under a different
+        one. A folder started on one task can then never quietly be resumed
+        on all twelve.
+
+        Args:
+            task_ids: The tasks to keep, by id. Empty keeps them all.
+
+        Returns:
+            Suite: The same suite with only those tasks, in the manifest's
+            order. The suite itself, unchanged, when ``task_ids`` is empty.
+
+        Raises:
+            BenchmarkError: If an id is not one of the suite's tasks.
+        """
+        if not task_ids:
+            return self
+        unknown = sorted(set(task_ids) - {task.id for task in self.tasks})
+        if unknown:
+            raise BenchmarkError(
+                f"{self.path}: no task named {', '.join(unknown)} in suite {self.name!r}"
+            )
+        kept = tuple(task for task in self.tasks if task.id in task_ids)
+        label = ",".join(task.id for task in kept)
+        return replace(self, name=f"{self.name}[{label}]", tasks=kept)
 
     def unreviewed_sites(self) -> tuple[Site, ...]:
         """List the sites whose terms no person has confirmed yet.

@@ -639,6 +639,13 @@ def eval_command(
         int,
         typer.Option("--trials", min=1, help="Times to repeat each task."),
     ] = DEFAULT_TRIALS,
+    tasks: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--task",
+            help="Run only this task, by id. Repeat for several. Default: every task.",
+        ),
+    ] = None,
     cold: Annotated[
         bool,
         typer.Option(
@@ -685,6 +692,9 @@ def eval_command(
     Args:
         suite: The suite manifest, which lists the benchmark tasks.
         trials: How many times to repeat each task.
+        tasks: The ids of the tasks to run, or None for every task. A sweep
+            of some tasks is named for them, so it cannot later be resumed
+            as a sweep of all of them.
         cold: True for an empty skill library, False for the learned one.
         workers: How many trials run at once, or None for the configured
             number.
@@ -710,7 +720,7 @@ def eval_command(
         profile=profile, headed=headed, budget_usd=budget_usd, budget_hours=budget_hours
     )
     try:
-        loaded = load_suite(suite)
+        loaded = load_suite(suite).only(tuple(tasks or ()))
         judge = Judge.from_config(config) if config.judge_profile else None
     except (BenchmarkError, ConfigError, ModelClientError) as error:
         typer.echo(f"waa: {error}", err=True)

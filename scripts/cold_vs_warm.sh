@@ -55,21 +55,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Said before anything starts: run outside the project's environment, `waa`
-# is simply not on the path, and the shell's own "command not found" does not
-# say how to fix it.
-if ! command -v "$WAA" > /dev/null 2>&1; then
-  echo "cold_vs_warm: cannot find the '$WAA' command. Run this from the project" \
-    "folder as: uv run scripts/cold_vs_warm.sh ... (or set WAA to the command's path)." >&2
-  exit 2
-fi
+# require_waa, step: see helpers.sh.
+source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
+require_waa
 
 # Where each pass keeps its runs. Must match the names `waa eval` picks.
 cold_dir="runs/eval-${profile}-cold"
 warm_dir="runs/eval-${profile}-warm"
-
-# step: runs one step, with retries (see step.sh).
-source "$(dirname "${BASH_SOURCE[0]}")/step.sh"
 
 # 1. Cold: an empty library, by construction.
 step "$attempts" "cold pass" "$WAA" eval --cold --trials "$trials" --profile "$profile"
