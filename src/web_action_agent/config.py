@@ -344,6 +344,22 @@ class Config(BaseModel):
             "Fewer are still reported, with their count and a warning."
         ),
     )
+    opik_url: str | None = Field(
+        default=None,
+        description=(
+            "Address of a self-hosted Opik, for `waa export --to opik`. Empty "
+            "means Opik Cloud, which needs WAA_OPIK_API_KEY instead."
+        ),
+    )
+    opik_workspace: str | None = Field(
+        default=None,
+        description="Opik Cloud workspace to export into. Empty means the key's own.",
+    )
+    opik_project: str = Field(
+        default="web-action-agent",
+        min_length=1,
+        description="Opik project runs are exported into.",
+    )
 
 
 def env_var_for(field: str) -> str:

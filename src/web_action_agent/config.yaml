@@ -181,3 +181,12 @@ budget_hours: 6.0
 # should rest on before it is relied on. Fewer are still reported in the
 # results tables, with how many there were and a warning.
 agreement_min_labels: 20
+
+# --- Exporting finished runs to Opik (optional) --------------------------------
+#
+# `waa export --to opik` copies finished run folders to Opik, to look at them
+# side by side. Nothing else uses these. Opik Cloud needs WAA_OPIK_API_KEY in
+# .env; a self-hosted Opik needs its address here or in WAA_OPIK_URL instead.
+opik_url:
+opik_workspace:
+opik_project: web-action-agent

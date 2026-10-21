@@ -17,6 +17,11 @@ dependencies = [
     "jsonschema>=4.23",
 ]
 
+[project.optional-dependencies]
+# Only for `waa export --to opik`, which copies finished runs to Opik for
+# viewing. Nothing else imports it.
+opik = ["opik>=2.2"]
+
 [project.scripts]
 web-action-agent = "web_action_agent.cli:main"
 waa = "web_action_agent.cli:main"

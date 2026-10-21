@@ -248,6 +248,37 @@ screenshot channel costs little and buys little: the tasks the agent fails
 are not failed for want of seeing the page. The per-task results are in
 `results/dom_vs_dual.md`.
 
+### Viewing runs in Opik (optional)
+
+Every run folder is complete evidence, but it is read one folder at a time.
+`waa export --to opik` copies finished runs to [Opik](https://github.com/comet-ml/opik),
+an open-source viewer for AI agent traces, to look at many together: each step
+on a timeline with its annotated screenshot inline, and one experiment per arm
+of a comparison, so two arms can be compared task by task.
+
+```bash
+uv sync --extra opik                        # the optional package
+uv run waa export --to opik runs/           # every sweep in runs/
+uv run waa export --to opik runs/modality-openrouter runs/modality-openrouter-text
+```
+
+It is a separate step after the runs, reading folders they already wrote, so
+it cannot change how a run behaves; the run folders and results tables stay
+the record. Opik Cloud's free tier needs `WAA_OPIK_API_KEY` in `.env`; a
+self-hosted Opik needs only its address, `WAA_OPIK_URL`. With neither, the
+command says so and sends nothing, and nothing else in the project needs the
+package or an account.
+
+What is sent: a trace per run, with its verdict and failure category; a span
+per step with its screenshot; a span per model call and per browser action,
+named after the OpenTelemetry conventions for AI systems
+(`gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`,
+and so on), with tokens, cost and timing. Every span keeps the times the run
+recorded, and its id is made from the run's own, so exporting a run twice
+does not duplicate it. What is not sent: the task's wording, the page's text,
+what the model replied or typed, or any address it chose. Those stay in the
+run folder.
+
 ### Exit codes
 
 | Code | Meaning |

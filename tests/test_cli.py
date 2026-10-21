@@ -179,7 +179,7 @@ def test_the_command_list_is_taken_from_the_commands_themselves() -> None:
     Other modules use it to tell a task string from a mistyped command, so a
     hand-maintained copy drifting from the real list would misroute arguments.
     """
-    assert COMMANDS == {"run", "eval", "induce", "skills", "judge"}
+    assert COMMANDS == {"run", "eval", "induce", "skills", "judge", "export"}
 
 
 # --- The exit-code contract -------------------------------------------------

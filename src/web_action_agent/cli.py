@@ -60,6 +60,8 @@ from web_action_agent.eval_harness import (
     passing_trials,
 )
 from web_action_agent.executor import Executor
+from web_action_agent.export_opik import ExportError, connect, find_targets
+from web_action_agent.export_opik import export as export_runs
 from web_action_agent.inducer import Inducer, InductionError
 from web_action_agent.judge import Judge, independence_problem
 from web_action_agent.metrics import HUMAN_LABELS_FILE, MetricsError, find_sweeps, write_results
@@ -1080,6 +1082,90 @@ def _review(runs_dir: Path, labels_path: Path, suite_path: Path, target: int) ->
     if summary.reviewable == 0:
         typer.echo("waa: no trial has a finished mark yet, so there is nothing to check", err=True)
         raise typer.Exit(EXIT_TASK_FAILURE)
+    raise typer.Exit(EXIT_SUCCESS)
+
+
+@app.command(
+    name="export",
+    help=(
+        "Copy finished runs to Opik, to review them side by side.\n\n"
+        "Optional: needs the 'opik' extra and an Opik key (WAA_OPIK_API_KEY) "
+        "or a self-hosted Opik's address (WAA_OPIK_URL). Without either it "
+        "says so and sends nothing. Run folders stay the record; Opik gets a "
+        "copy of their timings, counts and screenshots, never their text."
+    ),
+)
+def export_command(
+    paths: Annotated[
+        list[Path] | None,
+        typer.Argument(
+            help="Run folders, sweep folders, or a folder of sweeps. Default: runs/.",
+        ),
+    ] = None,
+    to: Annotated[
+        str,
+        typer.Option("--to", help="Where to export to. Only 'opik' for now."),
+    ] = "opik",
+) -> None:
+    """Copy finished run folders to Opik, as a separate step after the runs.
+
+    Never part of a run: it only reads folders runs have already written, so
+    it cannot change how a run behaves, and leaving it out costs nothing.
+
+    Args:
+        paths: What to export. Each may be a run folder, a sweep folder, or a
+            folder of sweeps; None means every sweep in ``runs/``.
+        to: The destination. Only ``opik`` exists.
+
+    Raises:
+        typer.Exit: :data:`EXIT_SUCCESS` when the runs were exported, or when
+            there is no Opik key or address to export to -- skipping is not
+            an error; :data:`EXIT_USAGE` when the destination is unknown,
+            nothing to export was found, the settings are unreadable, or the
+            optional package is not installed.
+    """
+    if to != "opik":
+        typer.echo(f"waa: cannot export to {to!r}: the only destination is 'opik'", err=True)
+        raise typer.Exit(EXIT_USAGE)
+    try:
+        env = resolve_env()
+        config = load_config(env=env)
+    except ConfigError as error:
+        typer.echo(f"waa: {error}", err=True)
+        raise typer.Exit(EXIT_USAGE) from error
+
+    targets = find_targets(paths or [RUNS_ROOT])
+    if not targets:
+        where = ", ".join(str(p) for p in (paths or [RUNS_ROOT]))
+        typer.echo(f"waa: no finished run folders found in {where}", err=True)
+        raise typer.Exit(EXIT_USAGE)
+
+    try:
+        kit = connect(
+            env=env,
+            url=config.opik_url,
+            workspace=config.opik_workspace,
+            project=config.opik_project,
+        )
+    except ExportError as error:
+        typer.echo(f"waa: {error}", err=True)
+        raise typer.Exit(EXIT_USAGE) from error
+    if kit is None:
+        # Not an error: most people running the agent have no Opik account,
+        # and the run folders already hold everything.
+        typer.echo(
+            "waa: Opik export skipped: no WAA_OPIK_API_KEY for Opik Cloud and no "
+            "WAA_OPIK_URL for a self-hosted Opik. Nothing was sent.",
+            err=True,
+        )
+        raise typer.Exit(EXIT_SUCCESS)
+
+    counts = export_runs(
+        kit, targets, project=config.opik_project, log=lambda line: typer.echo(line, err=True)
+    )
+    for reason in counts.skipped:
+        typer.echo(f"waa: skipped {reason}", err=True)
+    typer.echo(counts.summary())
     raise typer.Exit(EXIT_SUCCESS)
 
 
