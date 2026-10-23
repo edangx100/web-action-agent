@@ -82,9 +82,10 @@ IGNORED = [
 
 COMMITTED = [
     # The one curated example run, at every depth inside it.
-    "runs/example/action_log.jsonl",
-    "runs/example/cost_log.jsonl",
-    "runs/example/screenshots/step-001.png",
+    "runs/example/actions.jsonl",
+    "runs/example/calls.jsonl",
+    "runs/example/README.md",
+    "runs/example/screenshots/step-00.png",
     # Aggregated results and human labels, wherever under runs/ they are written.
     "runs/results/success_rate.md",
     "runs/2026-08-24T12-00-00Z-task-07/results/verdicts.md",

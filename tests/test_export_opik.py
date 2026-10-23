@@ -14,8 +14,9 @@ tests hold what makes that copy trustworthy and harmless:
   nothing else in the project needs either.
 
 The export is tested against a stand-in for the Opik client, so no account,
-network or package is needed. A run with screenshots is made by copying the
-fixture run and giving its steps pictures.
+network or package is needed. The committed example run in ``runs/example/``
+is exported as it is. The other cases start from a small made-up run, copied
+and given pictures for some of its steps.
 """
 
 from __future__ import annotations
@@ -58,7 +59,11 @@ from web_action_agent.export_opik import (
 )
 from web_action_agent.trace import ACTION_LOG, SCREENSHOT_DIR
 
-#: The committed example run every export test starts from.
+#: The committed example run: a real run, with a real screenshot per step.
+EXAMPLE = Path(__file__).resolve().parent.parent / "runs" / "example"
+
+#: A small made-up run, for what the example cannot show: a step that types
+#: text, a failed verdict, and runs grouped into sweeps.
 FIXTURE = Path(__file__).parent / "fixtures" / "traces" / "search-and-open"
 
 #: Text from the fixture run that must never leave the run folder: the task's
@@ -264,6 +269,81 @@ def export_one(tmp_path: Path) -> tuple[StubClient, Path]:
 def recorded_steps(run: Path) -> list[dict[str, Any]]:
     """The fixture's step records, as written."""
     return [json.loads(line) for line in (run / ACTION_LOG).read_text().splitlines()]
+
+
+# --- The committed example run ----------------------------------------------------------
+#
+# The real run in `runs/example/`, exported as it is: five steps on a live
+# site, each with its own screenshot. The made-up fixture run further down
+# covers what the example has none of (typed text, a failed verdict, sweeps).
+
+
+def export_example() -> StubClient:
+    """Export the committed example run to the stand-in client.
+
+    Returns:
+        StubClient: What was sent.
+    """
+    kit, client = a_kit()
+    export(kit, find_targets([EXAMPLE]), log=lambda line: None)
+    return client
+
+
+@pytest.mark.unit
+def test_the_example_run_exports_a_span_per_step_with_its_screenshot() -> None:
+    client = export_example()
+    steps = step_spans(client)
+
+    assert [s["name"] for s in steps] == [
+        "step 1: click",
+        "step 2: click",
+        "step 3: click",
+        "step 4: click",
+        "step 5: done",
+    ]
+    # Each step's picture is the page it acted on, saved before the step, so
+    # step 1 carries step-00.png.
+    assert [s["attachments"] for s in steps] == [
+        [("attachment", f"step-{n:02d}.png")] for n in range(5)
+    ]
+
+
+@pytest.mark.unit
+def test_the_example_runs_spans_carry_its_recorded_times() -> None:
+    client = export_example()
+
+    for span, step in zip(step_spans(client), recorded_steps(EXAMPLE), strict=True):
+        assert span["start_time"] == parse_time(step["started_at"])
+        assert span["end_time"] == parse_time(step["ended_at"])
+
+
+@pytest.mark.unit
+def test_the_example_runs_pass_is_its_score() -> None:
+    trace = export_example().traces[0]
+
+    assert trace["feedback_scores"] == [{"name": "passed", "value": 1.0}]
+    assert trace["tags"] == ["pass"], "no arm: the example is not part of a sweep"
+
+
+@pytest.mark.unit
+def test_no_text_from_the_example_run_leaves_it() -> None:
+    # The task's wording, the start of every page's text, the names of the
+    # links the agent clicked, and its answer: all of it stays in the folder.
+    steps = recorded_steps(EXAMPLE)
+    run = json.loads((EXAMPLE / "run.json").read_text(encoding="utf-8"))
+    private = [run["task"], "$3,350"]
+    private += [step["observation"]["text"][:60] for step in steps]
+    private += [
+        element["name"]
+        for step in steps
+        for element in step["observation"]["elements"]
+        if element["id"] == step["action"].get("element_id")
+    ]
+
+    sent = json.dumps(export_example().__dict__, default=str)
+
+    for text in private:
+        assert text not in sent, f"{text!r} left the run folder"
 
 
 # --- On the run's timeline ---------------------------------------------------------------

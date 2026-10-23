@@ -51,6 +51,15 @@ Every action is typed and passes a validator before it reaches the browser.
 Every run — success or failure — writes a self-contained artifact folder with
 annotated screenshots, an action log, cost accounting, and a verdict.
 
+### A worked example
+
+[`runs/example/`](runs/example/) is one complete run, committed so you can see
+everything a run leaves behind without running anything: the agent finds
+Singapore's income tax rates on the IRAS site and reports the tax on the first
+$80,000 ($3,350) in 5 steps, for $0.0022. Its
+[README](runs/example/README.md) walks through each step with the screenshot
+the agent saw, and explains each file in the folder.
+
 ## Requirements
 
 - Python 3.11+

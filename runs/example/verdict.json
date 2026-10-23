@@ -1,0 +1,21 @@
+{
+  "status": "pass",
+  "reason": "every check passed",
+  "agent_outcome": "success",
+  "checks": [
+    {
+      "method": "answer_matches",
+      "passed": true,
+      "detail": "answer '$3,350' matches '$3,350'"
+    },
+    {
+      "method": "url_contains",
+      "passed": true,
+      "detail": "final URL 'https://www.iras.gov.sg/taxes/individual-income-tax/basics-of-individual-income-tax/tax-residency-and-tax-rates/individual-income-tax-rates' contains 'individual-income-tax-rates'"
+    }
+  ],
+  "judge": null,
+  "category": null,
+  "categorized_by": null,
+  "marked_at": "2026-10-20T11:34:02.261685+00:00"
+}

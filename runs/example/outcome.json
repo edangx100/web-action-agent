@@ -1,0 +1,32 @@
+{
+  "run_id": "run-bbdb048f7aee",
+  "task": "Starting from the IRAS home page, find the individual income tax rates for tax residents. Using the rates that apply from Year of Assessment 2024 onwards, report the gross tax payable on the first $80,000 of chargeable income.",
+  "start_url": "https://www.iras.gov.sg/",
+  "started_at": "2026-10-20T11:33:22.978Z",
+  "ended_at": "2026-10-20T11:34:02.248Z",
+  "steps": 5,
+  "outcome": {
+    "ok": true,
+    "category": "success",
+    "answer": "$3,350",
+    "reason": null,
+    "steps": 5
+  },
+  "final_action": {
+    "action": "done",
+    "status": "success",
+    "answer": "$3,350",
+    "reason": null
+  },
+  "cost": {
+    "calls": 5,
+    "prompt_tokens": 10308,
+    "completion_tokens": 6430,
+    "total_tokens": 16738,
+    "cost_usd": 0.002162,
+    "known_cost_usd": 0.002162,
+    "unpriced_calls": 0,
+    "latency_s": 34.934,
+    "waited_s": 0.0
+  }
+}

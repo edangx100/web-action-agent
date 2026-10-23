@@ -8,15 +8,13 @@ that, and the comparison is deliberately against the run's own report rather
 than against a fixture — a fixture only proves the reader agrees with whoever
 wrote the fixture.
 
-**Why the round trip and not a committed example.** The task this file was
-written for describes checking the reader against a curated example run
-committed to the repository. That folder is a later task's job, and it depends
-on this reader rather than the other way round — its own test is that it passes
-*this*. So the strongest thing available now is better anyway: the folders here
-are produced by the real writer, from real runs through the real loop, and
-checked against the report those runs returned. A committed example can only
-show the reader agrees with one stored folder; this shows it agrees with the
-thing the folder was made from.
+**Why the round trip as well as the committed example.** The committed
+example run in ``runs/example/`` is read back by this reader in
+``tests/test_example_run.py``. But a committed example can only show the
+reader agrees with one stored folder. The folders here are produced by the real
+writer, from real runs through the real loop, and checked against the report
+those runs returned: that shows the reader agrees with the thing the folder was
+made from.
 
 **Two failures are worth as much as the successes.** A folder from a killed run
 has to read as a killed run rather than as an error, because flushing per step
