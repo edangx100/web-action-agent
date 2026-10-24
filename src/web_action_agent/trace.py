@@ -88,6 +88,10 @@ OUTCOME_FILE = "outcome.json"
 #: Where the observer puts each step's annotated screenshot.
 SCREENSHOT_DIR = "screenshots"
 
+#: Where a video of the browser goes, for a run started with
+#: ``waa run --record-video``. Most runs have none.
+VIDEO_DIR = "video"
+
 
 class TraceError(Exception):
     """The run folder cannot be written, or a record does not fit the schema.

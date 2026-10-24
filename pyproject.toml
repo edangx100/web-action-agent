@@ -21,6 +21,10 @@ dependencies = [
 # Only for `waa export --to opik`, which copies finished runs to Opik for
 # viewing. Nothing else imports it.
 opik = ["opik>=2.2"]
+# Only for scripts/demo.sh, which records the terminal with asciinema and turns
+# the browser's video into a GIF with ffmpeg (a copy comes with imageio-ffmpeg,
+# so nothing has to be installed system-wide).
+demo = ["asciinema>=2.4,<3", "imageio-ffmpeg>=0.6"]
 
 [project.scripts]
 web-action-agent = "web_action_agent.cli:main"

@@ -12,6 +12,69 @@ and more reliable over time.
 > **Status: early scaffold.** The agent loop is not implemented yet. This
 > repository currently contains the project skeleton only.
 
+## Demo
+
+![The agent clicking through the IRAS website, from the home page to the income tax rates page](docs/demo.gif)
+
+**What you are watching:** the agent answering a question by finding its way
+around a real government website, with no person touching the mouse.
+
+**The question it was given.** In everyday words: *"In Singapore, if your
+taxable income for the year is $80,000, how much income tax do you pay?"* It is
+not allowed to answer from memory. It starts on the home page of IRAS, the
+Inland Revenue Authority of Singapore (the country's tax office), and has to
+find the answer on the site. The exact wording it was given is:
+
+> Starting from the IRAS home page, find the individual income tax rates for
+> tax residents. Using the rates that apply from Year of Assessment 2024
+> onwards, report the gross tax payable on the first $80,000 of chargeable
+> income.
+
+**Where the answer is.** Singapore taxes income in slices, each at its own
+rate. The IRAS rates page has a table like this one, and the answer is in it:
+
+| Slice of income | Rate | Tax on that slice | Total tax so far |
+|---|---|---|---|
+| First $20,000 | 0% | $0 | $0 |
+| Next $10,000 | 2% | $200 | $200 |
+| Next $10,000 | 3.5% | $350 | $550 |
+| Next $40,000 (up to $80,000) | 7% | $2,800 | **$3,350** |
+| Next $40,000 (up to $120,000) | 11.5% | $4,600 | $7,950 |
+
+So the right answer is **$3,350**.
+
+**What the agent did,** in five steps (the GIF shows each one):
+
+1. Clicked **Taxes** in the top menu, which opens a menu on the same page.
+2. Clicked **Individual Income Tax** in that menu.
+3. Clicked **Tax residency and tax rates**, which opens that page.
+4. Clicked the card **Individual Income Tax rates**, which opens the rates page.
+5. Read the table and answered **3350**.
+
+**How we know it got it right.** Not because the agent said so. Every task in
+this project's benchmark comes with checks that a program runs on the finished
+run, and this one has two: the answer must be $3,350 (written any of the usual
+ways), and the run must end on the rates page. Both passed. That matters: a
+different AI model, given the same task, found the same table, read the row
+below, answered $4,600, and still reported success. The checks caught it.
+
+The run started with no shortcuts learned from earlier runs, as on a fresh
+copy of this project. It took five calls to the AI and cost $0.003. Waits for
+the AI are shortened in the GIF; the clicks play in real time.
+
+The same run in the terminal, one line per step, is in
+[`docs/demo.cast`](docs/demo.cast), an [asciinema](https://asciinema.org)
+recording. Play it with:
+
+```bash
+uv run --extra demo asciinema play docs/demo.cast
+```
+
+Both come from one run of `scripts/demo.sh`, which records a fresh run and
+replaces them only if the run passes the task's checks (`--help` for details).
+The run is the same task, and took the same path, as the committed
+[example run](runs/example/).
+
 ## How it works
 
 ```mermaid

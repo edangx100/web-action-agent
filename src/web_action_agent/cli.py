@@ -36,8 +36,11 @@ benchmark scripts, and the README.
 from __future__ import annotations
 
 import sys
+from contextlib import nullcontext
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Annotated
 
 import typer
@@ -76,7 +79,7 @@ from web_action_agent.review import DEFAULT_TARGET, ReviewError
 from web_action_agent.review import review as review_trials
 from web_action_agent.skill_schema import Skill
 from web_action_agent.skill_store import SkillStore, SkillStoreError
-from web_action_agent.trace import TraceError
+from web_action_agent.trace import VIDEO_DIR, TraceError
 from web_action_agent.trace_reader import read_run
 from web_action_agent.validator import Validator
 from web_action_agent.verifier import SkillVerifier, Verification, VerificationError
@@ -184,6 +187,16 @@ HeadedOption = Annotated[
     ),
 ]
 
+# A plain on/off flag, and not a setting in config.yaml: a video is for making
+# a demo of one run, never something every run should do.
+RecordVideoOption = Annotated[
+    bool,
+    typer.Option(
+        "--record-video",
+        help="Save a video of the browser in the run's folder (video/), for making a demo.",
+    ),
+]
+
 
 def _startup(**overrides: object) -> Config:
     """Resolve this run's settings and print what the configured keys allow.
@@ -227,7 +240,9 @@ def _startup(**overrides: object) -> Config:
     return config
 
 
-def _do_one_task(config: Config, task: str) -> int:
+def _do_one_task(
+    config: Config, task: str, *, record_video: bool = False, cold: bool = False
+) -> int:
     """Assemble the agent, run one task, and report how it went.
 
     This is the wiring: every component the run needs, built once, in the one
@@ -239,6 +254,10 @@ def _do_one_task(config: Config, task: str) -> int:
     Args:
         config: The resolved settings for this run.
         task: The task in the user's own words.
+        record_video: True to save a video of the browser in the run's folder,
+            under ``video/``.
+        cold: True to run with an empty skill library, as on a fresh clone,
+            instead of the learned skills in ``skills/``.
 
     Returns:
         int: :data:`EXIT_SUCCESS` if the agent finished the task,
@@ -257,15 +276,24 @@ def _do_one_task(config: Config, task: str) -> int:
     # benchmark worker uses, and the same assembly, so an ad-hoc run and a
     # measured one are the same agent. Everything the watcher sees goes to
     # standard error, so that standard output carries the answer alone.
+    settings = BrowserSettings.from_config(config)
+    if record_video:
+        # Inside the run's own folder, beside its screenshots.
+        settings = replace(settings, video_dir=folder / VIDEO_DIR)
     try:
-        with BrowserProcess(BrowserSettings.from_config(config)) as browser:
+        # A cold run gets an empty library of its own, deleted when the run
+        # ends, so the learned skills in skills/ are neither offered nor changed.
+        with (
+            TemporaryDirectory(prefix="waa-cold-") if cold else nullcontext(SKILLS_ROOT) as root,
+            BrowserProcess(settings) as browser,
+        ):
             finished = run_agent(
                 config,
                 task,
                 client=client,
                 folder=folder,
                 browser=browser,
-                library=SkillStore.from_config(config, SKILLS_ROOT),
+                library=SkillStore.from_config(config, Path(root)),
                 write=lambda line: typer.echo(line, err=True),
             )
     except RunSetupError as error:
@@ -598,6 +626,14 @@ def run(
     start_url: StartUrlOption = None,
     profile: ProfileOption = None,
     headed: HeadedOption = None,
+    record_video: RecordVideoOption = False,
+    cold: Annotated[
+        bool,
+        typer.Option(
+            "--cold",
+            help="Run with no learned skills, as on a fresh clone. skills/ is left as it is.",
+        ),
+    ] = False,
 ) -> None:
     """Do one task, from the start URL, and report what happened.
 
@@ -611,6 +647,9 @@ def run(
         profile: Endpoint profile for this run. Defaults to the configured one.
         headed: True to show the browser window, False to hide it, None to
             leave the setting as the configuration files have it.
+        record_video: True to save a video of the browser in the run's
+            folder, for making a demo.
+        cold: True to run with no learned skills.
 
     Raises:
         typer.Exit: With :data:`EXIT_SUCCESS` when the agent completed the
@@ -621,7 +660,7 @@ def run(
             spent.
     """
     config = _startup(start_url=start_url, profile=profile, headed=headed)
-    raise typer.Exit(_do_one_task(config, task))
+    raise typer.Exit(_do_one_task(config, task, record_video=record_video, cold=cold))
 
 
 @app.command(

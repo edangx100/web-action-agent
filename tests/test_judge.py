@@ -287,7 +287,7 @@ def test_the_program_refuses_to_start_with_a_same_family_judge(
     # Through the real command line: the refusal happens before any run.
     monkeypatch.setattr(cli, "resolve_env", lambda: {"WAA_JUDGE_PROFILE": "nvidia"})
     started: list[str] = []
-    monkeypatch.setattr(cli, "_do_one_task", lambda config, task: started.append(task) or 0)
+    monkeypatch.setattr(cli, "_do_one_task", lambda config, task, **_: started.append(task) or 0)
 
     result = CliRunner().invoke(cli.app, ["run", "find something"], catch_exceptions=False)
 
@@ -300,7 +300,7 @@ def test_the_program_refuses_to_start_with_a_same_family_judge(
 def test_the_program_starts_with_an_independent_judge(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "resolve_env", lambda: {"WAA_JUDGE_PROFILE": "openrouter-judge"})
     started: list[str] = []
-    monkeypatch.setattr(cli, "_do_one_task", lambda config, task: started.append(task) or 0)
+    monkeypatch.setattr(cli, "_do_one_task", lambda config, task, **_: started.append(task) or 0)
 
     result = CliRunner().invoke(cli.app, ["run", "find something"], catch_exceptions=False)
 

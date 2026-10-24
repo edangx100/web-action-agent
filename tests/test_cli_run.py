@@ -26,7 +26,7 @@ from web_action_agent import cli
 from web_action_agent.cli import EXIT_SUCCESS, EXIT_TASK_FAILURE, app
 from web_action_agent.config import Config
 from web_action_agent.model_client import ModelClient, load_profile
-from web_action_agent.trace import OUTCOME_FILE, read_action_log
+from web_action_agent.trace import OUTCOME_FILE, VIDEO_DIR, read_action_log
 
 runner = CliRunner()
 """CliRunner: Runs the command line in-process and captures what it printed."""
@@ -278,3 +278,144 @@ def test_the_command_leaves_a_run_folder_and_says_where(
         json.loads((folder / OUTCOME_FILE).read_text(encoding="utf-8"))["outcome"]["answer"]
         == "09:00 to 17:30"
     )
+
+
+#: The four bytes every WebM video file starts with (its EBML header).
+WEBM_SIGNATURE = b"\x1a\x45\xdf\xa3"
+
+
+@pytest.mark.fixture
+def test_record_video_saves_a_video_of_the_browser_in_the_run_folder(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    playwright: Any,
+    fixture_site: Any,
+) -> None:
+    """``--record-video`` is what the demo GIF is made from.
+
+    The video is finished only when the browser context closes, so finding a
+    complete file after the command returns also shows the context was closed.
+    """
+    a_run_in_this_process(
+        monkeypatch,
+        tmp_path,
+        playwright,
+        '{"action": "fill", "element_id": 7, "text": "membership"}',
+        '{"action": "done", "status": "success", "answer": "17 records"}',
+    )
+
+    result = invoke(
+        [
+            "run",
+            "how many records",
+            "--start-url",
+            fixture_site.url_for("search.html"),
+            "--record-video",
+        ]
+    )
+
+    assert result.exit_code == EXIT_SUCCESS, result.output
+    (folder,) = (tmp_path / "runs").iterdir()
+    videos = list((folder / VIDEO_DIR).glob("*.webm"))
+    assert len(videos) == 1, "one page, one video"
+    assert videos[0].read_bytes().startswith(WEBM_SIGNATURE)
+
+
+@pytest.mark.fixture
+def test_a_run_records_no_video_unless_asked(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    playwright: Any,
+    fixture_site: Any,
+) -> None:
+    a_run_in_this_process(
+        monkeypatch,
+        tmp_path,
+        playwright,
+        '{"action": "done", "status": "success", "answer": "09:00 to 17:30"}',
+    )
+
+    result = invoke(["run", "the hours", "--start-url", fixture_site.url_for("search.html")])
+
+    assert result.exit_code == EXIT_SUCCESS, result.output
+    (folder,) = (tmp_path / "runs").iterdir()
+    assert not (folder / VIDEO_DIR).exists()
+
+
+def libraries_used(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Note which skill library each run is given, and what was in it.
+
+    Wraps the real ``run_agent``, so the run itself is unchanged.
+
+    Returns:
+        list[dict[str, Any]]: Per run: the library's folder, the files in it
+        when the run started, and whether the folder still exists afterwards
+        (filled in by the caller).
+    """
+    seen: list[dict[str, Any]] = []
+    real = cli.run_agent
+
+    def watched(*args: Any, **kwargs: Any) -> Any:
+        root = kwargs["library"].root
+        seen.append({"root": root, "files": list(root.glob("*")) if root.is_dir() else []})
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(cli, "run_agent", watched)
+    return seen
+
+
+@pytest.mark.fixture
+def test_a_cold_run_gets_an_empty_library_of_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    playwright: Any,
+    fixture_site: Any,
+) -> None:
+    """``--cold`` runs as a fresh clone would: with no learned skills.
+
+    The learned library is not offered to the run, and is left as it was.
+    """
+    learned = tmp_path / "skills"
+    learned.mkdir()
+    (learned / "a-learned-skill.json").write_text("{}")
+    monkeypatch.setattr(cli, "SKILLS_ROOT", learned)
+    seen = libraries_used(monkeypatch)
+    a_run_in_this_process(
+        monkeypatch,
+        tmp_path,
+        playwright,
+        '{"action": "done", "status": "success", "answer": "09:00 to 17:30"}',
+    )
+
+    result = invoke(
+        ["run", "the hours", "--start-url", fixture_site.url_for("search.html"), "--cold"]
+    )
+
+    assert result.exit_code == EXIT_SUCCESS, result.output
+    (used,) = seen
+    assert used["root"] != learned and used["files"] == [], "an empty library"
+    assert not used["root"].exists(), "and thrown away when the run ended"
+    assert [p.name for p in learned.iterdir()] == ["a-learned-skill.json"], "skills/ untouched"
+
+
+@pytest.mark.fixture
+def test_a_run_uses_the_learned_library_unless_cold(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    playwright: Any,
+    fixture_site: Any,
+) -> None:
+    learned = tmp_path / "skills"
+    monkeypatch.setattr(cli, "SKILLS_ROOT", learned)
+    seen = libraries_used(monkeypatch)
+    a_run_in_this_process(
+        monkeypatch,
+        tmp_path,
+        playwright,
+        '{"action": "done", "status": "success", "answer": "09:00 to 17:30"}',
+    )
+
+    result = invoke(["run", "the hours", "--start-url", fixture_site.url_for("search.html")])
+
+    assert result.exit_code == EXIT_SUCCESS, result.output
+    assert [used["root"] for used in seen] == [learned]

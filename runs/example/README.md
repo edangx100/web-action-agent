@@ -4,6 +4,15 @@ One complete run, committed so you can see everything a run leaves behind
 without running anything yourself. Every other run folder under `runs/` is
 local scratch and is not committed.
 
+**The task in plain words:** *"In Singapore, if your taxable income for the
+year is $80,000, how much income tax do you pay?"* The agent must find the
+answer on the website of IRAS (Singapore's tax office), starting from its home
+page, rather than answer from memory. The answer is in a table on the IRAS
+rates page: tax is charged on slices of income at rising rates, and the table's
+running total for the first $80,000 is **$3,350**. The row below it, $4,600, is
+the tax on the *next* $40,000, an easy row to misread. The
+[README's Demo section](../../README.md#demo) shows the table.
+
 | | |
 |---|---|
 | Task | Starting from the IRAS home page, find the individual income tax rates for tax residents. Using the rates that apply from Year of Assessment 2024 onwards, report the gross tax payable on the first $80,000 of chargeable income. ([task file](../../benchmarks/tasks/iras-tax-on-first-80k.yaml)) |

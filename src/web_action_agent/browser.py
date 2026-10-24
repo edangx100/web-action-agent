@@ -48,6 +48,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Self
 
 from playwright.sync_api import (
@@ -127,6 +128,11 @@ class BrowserSettings:
         user_agent: What the browser tells every site it is. Sent on every
             request the page makes, so it is the one setting here that a
             stranger's server sees.
+        video_dir: Where to save a video of each page the task opens, or None
+            (the default) for no video. Only for making a demo: the run's
+            screenshots already record every step, so a video adds nothing
+            to the evidence. Not a configuration setting for the same reason;
+            ``waa run --record-video`` sets it for one run.
     """
 
     headed: bool = False
@@ -134,6 +140,7 @@ class BrowserSettings:
     viewport_height: int = 800
     action_timeout_s: float = ACTION_TIMEOUT_S
     user_agent: str = DEFAULT_USER_AGENT
+    video_dir: Path | None = None
 
     @classmethod
     def from_config(cls, config: Config) -> BrowserSettings:
@@ -550,9 +557,16 @@ class BrowserProcess:
         # The user agent is set on the context rather than per request, so
         # every request a page makes -- its images, its scripts, its background
         # fetches -- says the same true thing about who is asking.
+        #
+        # A video is recorded only when one was asked for. Playwright writes one
+        # file per page, at the viewport's size, and finishes each file when
+        # the context closes below.
+        video_dir = self.settings.video_dir
         context = self._browser.new_context(
             viewport=self.settings.viewport,
             user_agent=self.settings.user_agent,
+            record_video_dir=video_dir,
+            record_video_size=self.settings.viewport if video_dir is not None else None,
         )
         # Set once on the context rather than passed to every call, so that an
         # operation nobody thought to pass a timeout to still cannot hang the
