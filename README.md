@@ -1,16 +1,44 @@
-# web-action-agent
+<h1 align="center">web-action-agent</h1>
 
-A self-improving multimodal web action agent.
+<p align="center">
+  <b>An AI agent that uses real websites the way a person does:<br/>
+  it reads the page, decides what to click, checks its own work,<br/>
+  and learns shortcuts from the runs that go well.</b>
+</p>
 
-It takes a natural-language task — *"Search Hacker News for 'Rust async' and
-open the top result"* — perceives the page through both its DOM and an
-annotated screenshot, decides the next action with an LLM planner, executes it
-via Playwright, and self-evaluates on a small benchmark. Successful runs are
-distilled into reusable, verified skills, so repeated tasks get cheaper, faster,
-and more reliable over time.
+<p align="center">
+  <a href="https://github.com/edangx100/web-action-agent/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/edangx100/web-action-agent/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-blue">
+  <img alt="Tests: offline, no API key" src="https://img.shields.io/badge/tests-offline%2C%20no%20API%20key-brightgreen">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-lightgrey"></a>
+</p>
 
-> **Status: early scaffold.** The agent loop is not implemented yet. This
-> repository currently contains the project skeleton only.
+<p align="center">
+  <a href="#demo">Demo</a> ·
+  <a href="#results-at-a-glance">Results</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#why-tasks-fail">Why tasks fail</a> ·
+  <a href="#reference">Reference</a>
+</p>
+
+---
+
+You give it a task in plain words and a page to start on. It works through the
+site one step at a time (click, type, scroll) until it has the answer, then
+stops. Everything it saw and did is saved, so any run can be checked later.
+
+Three ideas set it apart:
+
+- **It sees exactly what it can click.** Every clickable thing on the page gets
+  a number, drawn on the screenshot and listed in the page's text, so the AI
+  answers "click 4", never "click the blue button somewhere on the left".
+- **It is marked, not trusted.** Every task comes with checks that a program
+  runs on the finished run: the right answer, on the right page. An agent that
+  says "done" with the wrong answer is caught. It happens: see the demo.
+- **It learns.** A run that worked can be turned into a reusable *skill*, a
+  saved route with blanks for the details, proved on the live site before it
+  is kept. Next time the agent replays it with almost no AI calls.
 
 ## Demo
 
@@ -51,220 +79,462 @@ So the right answer is **$3,350**.
 4. Clicked the card **Individual Income Tax rates**, which opens the rates page.
 5. Read the table and answered **3350**.
 
-**How we know it got it right.** Not because the agent said so. Every task in
-this project's benchmark comes with checks that a program runs on the finished
-run, and this one has two: the answer must be $3,350 (written any of the usual
-ways), and the run must end on the rates page. Both passed. That matters: a
-different AI model, given the same task, found the same table, read the row
-below, answered $4,600, and still reported success. The checks caught it.
+**How we know it got it right.** Not because the agent said so. This task
+comes with two checks that a program runs on the finished run: the answer must
+be $3,350 (written any of the usual ways), and the run must end on the rates
+page. Both passed. That matters: a different AI model, given the same task,
+found the same table, read the row below, answered $4,600, and still reported
+success. The checks caught it.
 
-The run started with no shortcuts learned from earlier runs, as on a fresh
-copy of this project. It took five calls to the AI and cost $0.003. Waits for
-the AI are shortened in the GIF; the clicks play in real time.
+The run started with no skills learned from earlier runs, as on a fresh copy
+of this project. It took five calls to the AI and cost $0.003. Waits for the AI
+are shortened in the GIF; the clicks play in real time.
 
-The same run in the terminal, one line per step, is in
+<details>
+<summary><b>The same run in the terminal, and how the demo is made</b></summary>
+
+<br/>
+
+The terminal side of the same run, one line per step, is in
 [`docs/demo.cast`](docs/demo.cast), an [asciinema](https://asciinema.org)
-recording. Play it with:
+recording:
 
 ```bash
 uv run --extra demo asciinema play docs/demo.cast
 ```
 
-Both come from one run of `scripts/demo.sh`, which records a fresh run and
-replaces them only if the run passes the task's checks (`--help` for details).
-The run is the same task, and took the same path, as the committed
-[example run](runs/example/).
+```
+  1  act    click [4] link "Taxes" -> ok (0.21s)
+  2  act    click [8] link "Individual Income Tax" -> ok (0.14s)
+  3  act    click [39] link "Tax residency and tax rates" -> ok (0.52s)
+  4  act    click [19] link "Individual Income Tax rates View individual income tax rates ..." -> ok (0.40s)
+  5  done   success: 3350
+
+5 calls, 20,161 tokens, $0.0030, 96.7s thinking
+success in 5 steps: 3350 (exit 0)
+```
+
+Both recordings come from one run of `scripts/demo.sh`, which records a fresh
+run and replaces them only if the run passes the task's checks (`--help` for
+details).
+
+</details>
+
+**See everything a run leaves behind.** [`runs/example/`](runs/example/) is
+one complete run of the same task, committed to the repository: a screenshot of
+every step with the numbered boxes the agent saw, every decision, every AI call
+and its cost, and the final mark. Its [README](runs/example/README.md) walks
+through it step by step.
+
+## Results at a glance
+
+All results are from the project's own benchmark: **12 tasks on 5 Singapore
+government websites** (the Ministry of Manpower, the Ministry of Education,
+IRAS, the statistics department SingStat, and the CPF Board, which runs the
+national savings scheme), run on
+the live sites in October 2026, each task several times. The AI behind the
+agent is NVIDIA's open **Nemotron 3 Nano** model unless a row says otherwise.
+
+| Question | Answer | Details |
+|---|---|---|
+| Does learning skills help? | **Yes.** Success rose from **33% to 53%**. On the three tasks a skill was learned for, **6 of 9 → 9 of 9** passes, in **82% fewer steps**. | [Learning skills](#1-does-learning-skills-help) |
+| Is it tied to one AI model? | **No.** Three models from three makers scored **42%, 33% and 33%**, and the same tasks defeated all three. | [Three AI models](#2-three-ai-models) |
+| Does it need one particular AI service? | **No.** The same code passed through an AI marketplace, NVIDIA's own service, and a server we ran ourselves, **3 of 3**. | [Three AI services](#3-three-ways-to-reach-the-ai) |
+| Do screenshots help? | **Barely, on these sites.** Reading pages as text alone passed 10 of 24 trials; adding screenshots when needed, 11 of 24, for **10% more cost**. | [Screenshots](#4-what-screenshots-buy) |
+| Does the AI judge agree with a person? | **Not measured yet.** The tool is built; the hand labels are still to be done. | [The judge](#5-the-judge-and-a-person) |
+
+Each sweep's full tables, task by task, are in [`results/`](results/README.md).
 
 ## How it works
 
 ```mermaid
-flowchart TB
-    U["User task (natural language)"] --> RET
-
-    subgraph ONLINE["Online — agent loop (bounded steps)"]
-        direction TB
-        RET["Skill retrieval"] --> P
-        P["Planner (LLM)"] -->|"typed action"| V["Validator"]
-        V -->|valid| E["Executor (Playwright)"]
-        V -->|"invalid + error feedback"| P
-        P -->|"use_skill(name, params)"| SR["Skill replay<br/>(deterministic, no LLM calls)"]
-        SR -->|"step failure"| P
-        E --> O["Observer<br/>annotated screenshot +<br/>distilled DOM element list"]
-        O --> P
-    end
-
-    ONLINE --> T["Trace writer"]
-    T --> EV["Eval harness"]
-
-    subgraph OFFLINE["Offline — skill induction"]
-        direction TB
-        IND["Skill inducer (LLM)"] --> VER{"Verify by replay"}
-        VER -->|pass| LIB[("Skill library")]
-        VER -->|fail| DIS["discard"]
-    end
-
-    T -->|"successful traces"| IND
-    LIB --> RET
-```
-
-Every decision is grounded: interactive elements are numbered once and those
-same numbers appear in both the DOM listing and the screenshot overlay
-(Set-of-Marks), so the planner can never be ambiguous about what it is clicking.
-Every action is typed and passes a validator before it reaches the browser.
-Every run — success or failure — writes a self-contained artifact folder with
-annotated screenshots, an action log, cost accounting, and a verdict.
-
-### A worked example
-
-[`runs/example/`](runs/example/) is one complete run, committed so you can see
-everything a run leaves behind without running anything: the agent finds
-Singapore's income tax rates on the IRAS site and reports the tax on the first
-$80,000 ($3,350) in 5 steps, for $0.0022. Its
-[README](runs/example/README.md) walks through each step with the screenshot
-the agent saw, and explains each file in the folder.
-
-## Requirements
-
-- Python 3.11+
-- Playwright with Chromium
-- To run a task: an OpenAI-compatible LLM endpoint (base URL, API key, model
-  name). Installing and testing needs neither an endpoint nor an account.
-
-## Install
-
-```bash
-uv sync                              # creates .venv from uv.lock
-uv run playwright install chromium
-```
-
-Or with pip and no `uv` at all:
-
-```bash
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt      # pinned, and installs this package
-playwright install chromium
-```
-
-## Usage
-
-```bash
-waa run "Search Hacker News for 'Rust async' and open the top result"
-```
-
-`waa` is the short alias; `web-action-agent` works identically.
-
-| Command | Purpose |
-|---|---|
-| `waa run "<task>"` | Run one task end to end |
-| `waa eval` | Run the benchmark suite with layered verdicts |
-| `waa induce <run-folder>` | Distill successful traces into candidate skills; `--all <sweep-folder>` learns from a benchmark sweep's passes |
-| `waa skills list \| show \| retire` | Inspect and curate the skill library |
-| `waa judge <runs-dir>` | Produce verdicts and the agreement report |
-| `waa judge --review [runs-dir]` | Check the machine's marks by hand, one run at a time; resumable |
-
-Add `--help` to any of them for its flags. Every run starts from an explicit
-URL — `--start-url`, or the `start_url` default — because the agent never
-begins on a blank page and guesses. `--headed` shows the browser window; it is
-off by default so runs work over SSH and in CI.
-
-### The cold-vs-warm experiment
-
-Does learning skills make the agent better? `scripts/cold_vs_warm.sh` answers
-it on one model: the benchmark with an empty skill library, then learning from
-that pass's passing trials, then the benchmark again with what was learnt.
-
-```bash
-uv run scripts/cold_vs_warm.sh --profile openrouter --trials 3
-```
-
-It spends real money and visits the benchmark's live sites; each pass has its
-own spending and time ceiling. Run it again to resume after a stop. The two
-passes are compared, with the change in success rate, steps, tokens, time and
-cost, in `results/cold_vs_warm.md`. A cold pass refuses to start on a library
-that holds skills, and a warm pass on one with none for the suite's sites, so
-neither arm can quietly be the other.
-
-### The multi-model comparison
-
-Is the agent any good only on the model it was built with? `scripts/multi_model.sh`
-runs the same benchmark, cold, on several models one after another, changing
-nothing but `--profile`:
-
-```bash
-uv run scripts/multi_model.sh                       # the three profiles below, 2 trials each
-uv run scripts/multi_model.sh --profiles "a b" --trials 1
-```
-
-It refuses to start while the code has uncommitted changes, and every sweep
-records the commit it ran, so `results/multi_model.md` can check, rather than
-assert, that only the model changed. The first comparison, on the live sites on
-19 October 2026:
-
-| Profile | Model (planner and screenshots) | N | Success rate | Avg steps | Avg time | Avg cost per trial |
-|---|---|---|---|---|---|---|
-| `openrouter` | `nvidia/nemotron-3-nano-30b-a3b` (screenshots: `nvidia/nemotron-3.5-super-vl`) | 24 (12 tasks × 2) | 41.7% | 10.8 | 78 s | $0.0042 |
-| `openrouter-qwen` | `qwen/qwen3.6-35b-a3b` | 24 (12 tasks × 2) | 33.3% | 12.6 | 173 s | $0.0174 |
-| `openrouter-glimmer` | `meta/muse-glimmer-30b` | 24 (12 tasks × 2) | 33.3% | 13.0 | 186 s | $0.0127 |
-
-All three ran commit `910e4ad`, with nothing uncommitted, the same suite, the
-same judge and an empty skill library. Three models of about the same size,
-from three makers, land within two trials of each other, and the same six tasks
-(the MOE school finder and the MOM pages) defeat all three: those failures
-belong to the agent and the sites, not to one model. The main model is also the
-cheapest, by three to four times, and the fastest, by more than two. With two trials per task
-these figures are rough; the per-task results are in `results/multi_model.md`.
-
-### The endpoint modes: same code, three ways to reach a model
-
-The agent never names a model or a service in its code. Both come from a
-profile, a few lines of configuration picked with `--profile`. So the same code
-runs against an aggregator, the model maker's own service, or a server you run
-yourself, and nothing else changes. That is checked, not claimed: on
-20 October 2026 one benchmark task ran once through each of the three, all on
-one commit, with nothing uncommitted.
-
-```mermaid
 flowchart LR
-    A["The agent<br/>(one commit, unchanged)"] -->|"--profile openrouter"| O["OpenRouter<br/>an aggregator"]
-    A -->|"--profile nvidia"| N["build.nvidia.com<br/>NVIDIA's own service"]
-    A -->|"--profile local"| L["vLLM, self-hosted<br/>at 127.0.0.1:8000"]
-    O --> M1["Nemotron 3 Nano"]
-    N --> M2["Nemotron 3 Nano Omni"]
-    L --> M3["Nemotron 3 Nano<br/>full precision, on an A100 80GB"]
+    T(["Your task<br/>+ a start page"]) --> L
+
+    subgraph L["The loop: one step at a time, at most 25 steps"]
+        direction TB
+        S["<b>Look</b><br/>number every clickable thing;<br/>read the page's text;<br/>a screenshot only if the text is thin"] --> D
+        D["<b>Decide</b><br/>the AI picks one action:<br/>click 4, type, scroll, go to,<br/>use a skill, or finish"] --> C
+        C{"<b>Check</b><br/>allowed action?<br/>real element?<br/>allowed site?"} -->|"yes"| A["<b>Act</b><br/>in a real browser<br/>(Playwright)"]
+        C -->|"no: say why,<br/>let the AI try again"| D
+        A --> S
+    end
+
+    L --> R[("<b>Run folder</b><br/>screenshots, every step,<br/>every AI call and its cost")]
+    R --> M{"<b>Mark</b><br/>right answer?<br/>right page?<br/>AI judge where needed"}
+    R -->|"runs that passed"| K["<b>Learn a skill</b><br/>a route with blanks;<br/>proved by replaying it<br/>with new values"]
+    K --> LIB[("Skill library")]
+    LIB -->|"offered next time<br/>on the same site"| D
 ```
 
-| Profile | Service | Model | Passed | Time | Tokens | Cost |
-|---|---|---|---|---|---|---|
-| `openrouter` | OpenRouter | `nvidia/nemotron-3-nano-30b-a3b` (screenshots: `nvidia/nemotron-3.5-super-vl`) | 1 of 1 | 31.3 s | 6,411 | $0.0007 |
-| `nvidia` | build.nvidia.com | `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` | 1 of 1 | 11.0 s | 2,685 | unknown (free trial access) |
-| `local` | vLLM on a rented A100 80GB, reached through an SSH tunnel | `nvidia/nemotron-3-nano-30b-a3b` (text only) | 1 of 1 | 3.9 s | 2,607 | unknown (self-hosted) |
+**Look.** The agent never hands the AI a raw web page. It lists only what a
+person could click on the visible screen, numbers each item, and draws the same
+numbers onto the screenshot (a technique called *Set-of-Marks*), alongside the
+page's main text. This is what the AI sees on the IRAS home page:
 
-Every check in `results/endpoint_modes.md` reads yes: the same commit
-(`6decfca`) with nothing uncommitted in every arm, the same task, the same
-judge, an empty skill library, and a different service for each. The
-self-hosted arm has no per-token price, so it reports tokens and time, and its
-dollars as unknown rather than zero; the GPU it ran on cost about $0.85 for the
-session. (The build.nvidia.com profile uses Nano's Omni sibling: the text-only
-Nano was retired there on 2026-09-01.)
+<p align="center">
+  <img src="runs/example/screenshots/step-00.png" alt="The IRAS home page with an orange numbered box around every clickable thing" width="720">
+</p>
 
-To run it yourself:
+To keep costs down, the screenshot goes to the AI only when the text looks
+insufficient: fewer than five clickable things found, or two failures in a row
+on text alone. Most steps use text only.
+
+**Decide.** The AI chooses exactly one of seven actions, in a fixed format, so
+there is no free-form text to misread and no way for it to run code. It sees
+its last five steps in full and a short summary of anything older.
+
+**Check.** Before anything reaches the browser, a validator checks the action:
+the right format, an element number that exists on this page, a site the run
+is allowed to visit. A bad action goes back to the AI with the reason, a fixed
+number of times.
+
+**Act.** One real Chromium browser, a fresh private session for every task,
+and good manners: at least a second between visits to a site, an honest name in
+every request, and the site's `robots.txt` obeyed.
+
+**Mark.** Every finished run is marked in layers. First, checks that need no AI
+at all (did it end on the right address, give the right answer, show the right
+text). Then, where an answer cannot be checked by code, a second and stronger
+AI from a different maker. And a person can spot-check the machine's marks, one
+run at a time, to measure how far to trust them.
+Every failure is given one of four causes, so a failure rate becomes a list of
+things to fix:
+
+| Cause | Meaning |
+|---|---|
+| **Grounding** | the right idea, the wrong thing on the page (typed into the wrong box) |
+| **Planning** | the wrong idea (skipped a step, gave up early, guessed) |
+| **Navigation** | lost between pages (went in circles, guessed addresses) |
+| **Site change** | the website changed under the task |
+
+**Learn.** A run that passed can be turned into a skill: the same route, with
+blanks where the task's details were. A skill is only kept after it has been
+replayed with *different* values on the live site and worked. When a task
+starts on a site with skills, they are offered to the AI; replaying one costs
+the single AI call that chose it.
+
+## Quick start
+
+### 1. Install
+
+You need Python 3.11+ and [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-uv run scripts/endpoint_modes.sh                     # openrouter, nvidia and local
-uv run scripts/endpoint_modes.sh --profiles nvidia   # just one
+git clone https://github.com/edangx100/web-action-agent.git
+cd web-action-agent
+uv sync                              # creates .venv from uv.lock
+uv run playwright install chromium   # the browser the agent drives
 ```
 
-| Profile | Key in `.env` |
+No `uv`? `pip install -r requirements.txt` in a virtual environment works too,
+then `playwright install chromium`.
+
+### 2. Check it works, with no account at all
+
+```bash
+uv run pytest                        # ~1,600 tests, offline, no API key
+```
+
+The tests use a small practice website served from your own machine, so they
+need no network, no key and no money.
+
+### 3. What you need for each part
+
+| To | You need |
 |---|---|
-| `openrouter` | `WAA_OPENROUTER_API_KEY` |
-| `nvidia` | `WAA_NVIDIA_API_KEY` |
-| `local` | none |
+| Read the code, install, run the tests | **Nothing.** No account, no key. |
+| Run the agent on a task (`waa run`) | **One AI endpoint**: any OpenAI-compatible service. The simplest is an [OpenRouter](https://openrouter.ai) key. An NVIDIA key, or a server you run yourself, also work. |
+| Reproduce the benchmark and its marks (`waa eval`) | The above, **plus a judge endpoint**. The suggested judge runs on the same OpenRouter key, so no second account. |
+| Look at runs in Opik (optional) | An [Opik](https://github.com/comet-ml/opik) key, or Opik running on your own machine. |
+
+Put the key in a file called `.env` (copy `.env.example` and fill it in):
+
+```bash
+WAA_OPENROUTER_API_KEY=sk-or-...        # to run the agent
+WAA_JUDGE_PROFILE=openrouter-judge      # to mark benchmark runs (same key)
+```
+
+Keys stay in `.env`, which git ignores, and the program never prints them.
+Every command starts by saying what your keys allow:
+
+```
+capabilities:
+  [ok] agent    profile 'openrouter' -> nvidia/nemotron-3-nano-30b-a3b
+  [ok] vision   screenshots go to nvidia/nemotron-3.5-super-vl
+  [ok] judge    profile 'openrouter-judge' -> google/gemini-3.8-flash
+```
+
+### 4. Run a task
+
+```bash
+uv run waa run --start-url https://www.iras.gov.sg/ \
+  "Find the individual income tax rates for tax residents and report the gross tax payable on the first \$80,000 of chargeable income."
+```
+
+You will see one line per step, then the answer. Add `--headed` to watch the
+browser window. The run's full record lands in a new folder under `runs/`.
+
+A run costs a fraction of a cent on the default model (about $0.002–$0.005).
+
+### 5. Run the benchmark
+
+```bash
+uv run waa eval --cold --trials 1      # all 12 tasks once, no learned skills
+```
+
+It runs four tasks at a time, stays under a spending ceiling ($15 by default),
+can be stopped and restarted where it left off, and writes its tables to
+`results/`.
+
+## Results
+
+The benchmark is 12 read-only tasks on 5 Singapore government websites: three
+that find an answer on one page, three that fill in a search form, and six that
+need several pages. Each was checked against the live site, and each site's
+terms of use allow an automated, read-only visitor. Every number below comes
+from runs on the live sites in October 2026. Trials per task are small (two or
+three), so read differences of a trial or two as noise.
+
+### 1. Does learning skills help?
+
+The benchmark ran twice on the same model: **cold**, with no skills, then
+**warm**, with the three skills learned from the cold run's passes.
+
+| | Cold (no skills) | Warm (3 learned skills) |
+|---|---|---|
+| Success rate, all 12 tasks (3 trials each) | 33.3% | **52.8%** |
+| …on the 3 tasks a skill was used for | 6 of 9, 11.1 steps | **9 of 9, 2.0 steps** |
+| …on the 9 tasks with no skill | 6 of 27 | 10 of 27 |
+| Average cost per trial | $0.0042 | $0.0030 |
+
+Read the split, not just the headline. Where a skill applied, every trial
+passed, in a fifth of the steps. The other nine tasks ran exactly as before,
+yet still went from 6 to 10 passes: that is how much results move between runs
+by chance, and it is a reason not to quote the headline alone.
+[Full table](results/cold_vs_warm.md) · `scripts/cold_vs_warm.sh`
+
+### 2. Three AI models
+
+The same benchmark, cold, on three similar-sized open models from three makers,
+changing nothing but one setting. Every run recorded the exact code version, so
+the table can check that only the model changed.
+
+| Model | Maker | Passed (24 trials) | Avg time per trial | Avg cost per trial |
+|---|---|---|---|---|
+| Nemotron 3 Nano 30B | NVIDIA | **10 (41.7%)** | 78 s | **$0.0042** |
+| Qwen 3.6 35B | Alibaba | 8 (33.3%) | 173 s | $0.0174 |
+| Muse Glimmer 30B | Meta | 8 (33.3%) | 186 s | $0.0127 |
+
+The same six tasks (the school finder and the Ministry of Manpower pages)
+defeated all three, so those failures belong to the agent and the sites, not
+to one model. The default model was also the cheapest and fastest.
+[Full table](results/multi_model.md) · `scripts/multi_model.sh`
+
+### 3. Three ways to reach the AI
+
+The code never names a model or a service; both come from a *profile*, a few
+lines of settings picked with `--profile`. One task ran through three very
+different services on the same code:
+
+| Profile | Service | Passed | Time | Cost |
+|---|---|---|---|---|
+| `openrouter` | OpenRouter, an AI marketplace | 1 of 1 | 31.3 s | $0.0007 |
+| `nvidia` | build.nvidia.com, the model maker's own service | 1 of 1 | 11.0 s | free trial credits |
+| `local` | vLLM on a rented A100 GPU, reached through an SSH tunnel | 1 of 1 | 3.9 s | no per-call price (GPU: $0.85 for the session) |
+
+[Full table](results/endpoint_modes.md) · `scripts/endpoint_modes.sh` · how to
+run the model yourself: [Reference](#reference)
+
+### 4. What screenshots buy
+
+The agent reads pages as text and adds a screenshot only when the text looks
+thin. Is the screenshot worth it? The benchmark ran twice: once as usual, and
+once with screenshots made impossible.
+
+| | Text only | Text + screenshots when needed |
+|---|---|---|
+| Passed (24 trials) | 10 | 11 |
+| AI calls that carried a picture | 0 of 256 | 68 of 235, in 4 trials |
+| Average cost per trial | $0.0029 | $0.0032 (+10%) |
+
+One more pass, within the noise. Where pictures were sent most, on the Ministry
+of Manpower site, they showed a page covered by a pop-up (see
+[why tasks fail](#why-tasks-fail)), which no picture fixes. On these sites, the
+tasks the agent fails are not failed for want of seeing the page.
+[Full table](results/dom_vs_dual.md) · `scripts/dom_vs_dual.sh`
+
+### 5. The judge and a person
+
+Some answers can't be checked by code (the latest population figure changes
+every year), so a second AI, **Gemini 3.8 Flash** from Google, judges those
+and names the cause of every failure. It is deliberately from a different
+maker than the agent's model, and the program refuses to start otherwise.
+
+How far to trust that judge is measured against a person. `waa judge --review`
+shows a person one finished run at a time, the evidence first and the machine's
+mark last, and records their verdict. From about 20 such labels the project
+reports how often the two agree, as a plain percentage and as Cohen's kappa,
+which discounts agreement that would happen by luck.
+
+**That measurement has not been made yet.** The tool and the statistics are
+built and tested, but the hand labels have not been collected, so no agreement
+figure is published. [`results/README.md`](results/README.md) says the same,
+and will carry the figure once the labels exist.
+
+## Why tasks fail
+
+Across all 195 marked trials, 81 passed and 114 failed. The judge gave every
+failure a cause:
+
+| Cause | Failed trials | What it looked like |
+|---|---|---|
+| Planning | 83 | gave up early, skipped a filter, scrolled in circles, guessed |
+| Navigation | 16 | lost between pages, guessed addresses that did not exist |
+| Grounding | 15 | the right idea, the wrong element |
+
+Three cases show the difference. Each was confirmed from the run's screenshots.
+
+### Grounding: the right idea, the wrong box
+
+**Task:** on the Ministry of Education's SchoolFinder, filter the list to
+primary schools in the area Bishan, and report how many there are (the answer
+is 3).
+
+The agent knew it had to filter by area. But it typed "Bishan" into **[4]
+"Enter your address or postal code"**, a box for finding schools near a home
+address, instead of choosing Bishan from **[5] "Select an area"**. Nothing was
+filtered, and it reported the total for the whole country: **182**.
+
+<p align="center">
+  <img src="docs/failures/moe-bishan-wrong-box.png" alt="SchoolFinder: the address box [4] and the 'Select an area' dropdown [5]; the list still shows 182 primary schools" width="720">
+</p>
+
+The agent reported success; the answer check marked it a fail. On this site,
+typing into the wrong box (the address box, the "Search for CCAs" box, once
+even the "Clear all" button) accounts for 8 of the 12 grounding failures. Most
+of the rest opened the right dropdown, then kept clicking the dropdown itself
+instead of the option inside it.
+
+### Planning: the right answer, without doing the task
+
+**Task:** on SchoolFinder, filter to secondary schools in Queenstown that offer
+the Integrated Programme, and name the school listed.
+
+The agent opened the Location section twice, never set a filter, and then
+answered **"Anglo-Chinese School (Independent)"**, which is the right school.
+It had answered from what the AI already knew, not from the website. The task's
+second check, that the run ends on the filtered page, failed it. This is why
+tasks check *how* the agent got there, not just the answer: an agent that
+guesses well on easy questions will guess wrong on the ones that matter.
+
+### Stuck behind a pop-up
+
+**Task:** on the Ministry of Manpower site, find how many days of annual leave
+an employee gets in their 4th year of service (the answer is 10).
+
+On the first visit, MOM's site shows a "take a short tour" box. Behind it, a
+see-through dark layer covers the page, so nothing else can be clicked. The
+way out is one click on **[5] Skip**.
+
+<p align="center">
+  <img src="docs/failures/mom-tour-popup.png" alt="The MOM home page with the tour pop-up; only its own buttons are numbered, including [5] Skip" width="45%">
+  &nbsp;
+  <img src="docs/failures/mom-stuck-behind-backdrop.png" alt="The MOM page scrolled down: the whole page dimmed, nothing numbered" width="45%">
+</p>
+
+The agent clicked the search icon instead, then scrolled. The box scrolled out
+of view, but the dark layer stayed: the agent now found **nothing clickable**
+on every step, and scrolled up and down until it ran out of steps. The two MOM
+tasks failed all 32 of their trials, on every model. Teaching the agent to dismiss a
+pop-up before anything else is the clearest next improvement.
+
+## Known limits
+
+- **Some websites refuse a browser with no window.** The agent runs *headless*
+  (no visible window) by default, so it works on servers. Several Singapore
+  sites refuse a headless browser outright (gov.sg, HDB, Singapore Statutes
+  Online, and the National Library Board's main site), and were left out of the
+  benchmark for that reason. `--headed` shows the window instead; whether
+  those sites then let the agent in has not been tested.
+- **Read-only, public pages.** No logins, no forms that change anything, no
+  purchases. A run may only visit the site it started on, plus any sites listed
+  in the settings.
+- **Small samples.** Two or three trials per task; differences of a trial or
+  two are noise, as the cold-vs-warm split shows.
+- **iframes and shadow DOM** (pages embedded inside pages) are not looked into.
+- **The judge is not yet checked against a person** (see above).
+
+## Reference
+
+<details>
+<summary><b>Commands</b></summary>
+
+<br/>
+
+`waa` is the short name; `web-action-agent` works the same. Add `--help` to any
+command for its options.
+
+| Command | What it does |
+|---|---|
+| `waa run "<task>"` | Run one task, from `--start-url` |
+| `waa eval` | Run the benchmark: every task, several trials, marked; `--cold` for no skills |
+| `waa induce <run-folder>` | Learn a skill from a run that passed; `--all <sweep-folder>` learns from a whole benchmark run |
+| `waa skills list \| show \| retire` | Look at and manage the skill library |
+| `waa judge <runs-dir>` | Mark finished runs with the AI judge |
+| `waa judge --review [runs-dir]` | Check the machine's marks by hand, one run at a time; can be stopped and resumed |
+| `waa export --to opik [runs]` | Copy finished runs to Opik to view them side by side (optional) |
+
+Useful options for `waa run`: `--profile <name>` (which AI service),
+`--headed` (show the browser), `--cold` (ignore learned skills),
+`--record-video` (save a video of the browser in the run's folder).
+
+Every run starts from a named page, never from a blank one. Exit codes:
+`0` it worked; `1` the command ran but the task was not completed; `2` the
+command could not run (a bad option or setting). Scripts use the difference: a
+failed task is recorded and the run goes on; a bad setting stops it.
+
+</details>
+
+<details>
+<summary><b>Configuration and AI services (profiles)</b></summary>
+
+<br/>
+
+Settings come in three layers, each overriding the one before:
+`config.yaml` (the defaults, checked in), then `.env` (this machine's settings
+and every key, never committed), then command-line options. `.env.example`
+lists every setting the agent reads. A key is never accepted from
+`config.yaml`.
+
+AI services are described as *profiles* in
+`src/web_action_agent/profiles.yaml`: the address, which variable holds the
+key, the model for text, and the model for screenshots.
+
+| Profile | Service | Key in `.env` |
+|---|---|---|
+| `openrouter` (default) | OpenRouter: Nemotron 3 Nano; screenshots to Nemotron 3.5 Super VL | `WAA_OPENROUTER_API_KEY` |
+| `openrouter-text` | the same, with no screenshot model | `WAA_OPENROUTER_API_KEY` |
+| `openrouter-qwen`, `openrouter-glimmer` | OpenRouter: Qwen 3.6 35B, Muse Glimmer 30B | `WAA_OPENROUTER_API_KEY` |
+| `nvidia` | build.nvidia.com: Nemotron 3 Nano Omni | `WAA_NVIDIA_API_KEY` |
+| `local` | your own vLLM server at `http://127.0.0.1:8000/v1` | none |
+| `openrouter-judge` | the judge: Gemini 3.8 Flash on OpenRouter | `WAA_OPENROUTER_API_KEY` |
+
+Where a marketplace sends one model to several hosts, the profile pins the
+host, so a benchmark number can be reproduced later.
+
+</details>
+
+<details>
+<summary><b>Running the model on your own GPU (vLLM)</b></summary>
+
+<br/>
 
 The `local` profile expects a vLLM server at `http://127.0.0.1:8000/v1`,
-serving Nemotron 3 Nano under the name the profile asks for. The full-precision
-model needs an 80 GB GPU (A100 or H100). Install vLLM 0.12 or later into its
-own environment (on a recent Ubuntu, the system Python refuses `pip install`),
-fetch the reasoning parser from the model's Hugging Face page, and serve:
+serving Nemotron 3 Nano under the name the profile asks for. The
+full-precision model needs an 80 GB GPU (A100 or H100). Install vLLM 0.12 or
+later into its own environment, fetch the reasoning parser from the model's
+Hugging Face page, and serve:
 
 ```bash
 uv venv venv && uv pip install --python venv/bin/python "vllm>=0.12.0"
@@ -277,207 +547,113 @@ VLLM_USE_FLASHINFER_SAMPLER=0 venv/bin/vllm serve nvidia/NVIDIA-Nemotron-3-Nano-
 ```
 
 `VLLM_USE_FLASHINFER_SAMPLER=0` is needed only where FlashInfer's prebuilt
-kernels are missing and it cannot compile them (no `ninja` or `nvcc`); without
-it, such a server stops at its first request. NVIDIA also publishes an 8-bit
-version (`...-FP8`, 33 GB instead of 63 GB) for H100-class GPUs.
+kernels are missing and cannot be compiled (no `ninja` or `nvcc`). NVIDIA also
+publishes an 8-bit version (`...-FP8`, 33 GB instead of 63 GB) for H100-class
+GPUs. A server on another machine, such as a rented GPU, can be reached with an
+SSH tunnel (`ssh -N -L 8000:localhost:8000 <gpu-host>`); the profile stays as
+it is.
 
-The server can be on another machine, such as a rented GPU: an SSH tunnel
-(`ssh -N -L 8000:localhost:8000 <gpu-host>`) makes it appear on port 8000
-here, and the profile stays as it is.
+</details>
 
-### DOM only vs. DOM + screenshots
+<details>
+<summary><b>The experiment scripts</b></summary>
 
-The agent reads each page as text: the numbered list of things it can click,
-and the page's words. It adds an annotated screenshot only when a cheap rule
-says the text may be missing something: too few elements found, or the
-planner failing on text twice in a row. What does that screenshot buy?
-`scripts/dom_vs_dual.sh` runs the benchmark twice on the same planner model,
-once as usual and once on `openrouter-text`, the same profile with no
-screenshot model, so no image can be sent at all:
+<br/>
 
-```bash
-uv run scripts/dom_vs_dual.sh                 # both arms, 2 trials per task
-```
+Each script runs live, spends real money (cents), and can be run again to pick
+up where it stopped. The comparison scripts refuse to start while the code has
+uncommitted changes, so every arm of a comparison runs one known version.
 
-The first run, on the live sites on 20 October 2026:
+| Script | What it runs | Results |
+|---|---|---|
+| `scripts/cold_vs_warm.sh` | the benchmark with no skills, learning, then again with the skills | [`results/cold_vs_warm.md`](results/cold_vs_warm.md) |
+| `scripts/multi_model.sh` | the benchmark on several models | [`results/multi_model.md`](results/multi_model.md) |
+| `scripts/endpoint_modes.sh` | one task through each of three services | [`results/endpoint_modes.md`](results/endpoint_modes.md) |
+| `scripts/dom_vs_dual.sh` | the benchmark with and without screenshots | [`results/dom_vs_dual.md`](results/dom_vs_dual.md) |
+| `scripts/demo.sh` | one run, recorded as the demo GIF and terminal cast | [`docs/demo.gif`](docs/demo.gif) |
 
-| | DOM only | DOM + screenshots when gated in | Change |
-|---|---|---|---|
-| Trials passed (N = 24, 12 tasks × 2) | 10 (41.7%) | 11 (45.8%) | +1 trial |
-| Model calls that carried an image | 0 of 256 | 68 of 235, in 4 trials | |
-| Average cost per trial | $0.0029 | $0.0032 | +10% |
-| Average tokens per trial | 24,966 | 26,036 | +4% |
-| Average time per trial | 77.1 s | 67.9 s | −12% |
+Run them with `uv run scripts/<name>.sh` (`uv run --extra demo` for the demo);
+each has `--help`. Each sweep's table links every result to the run folder it
+came from; those folders stay on the machine that ran them, except the one
+committed example.
 
-Both arms ran commit `b9f8954` with nothing uncommitted, and every request of
-the text-only arm was checked: none carried an image. The rule kept
-screenshots rare: they were sent in 4 trials of 24, on three tasks. They
-plausibly bought one pass (`cpf-total-rate`, 0/2 → 1/2); on the two Ministry
-of Manpower tasks, 53 image calls between them changed nothing. On tasks where
-no image was sent at all, two results moved in opposite directions by chance,
-which is as large as the whole difference. On this suite, then, the
-screenshot channel costs little and buys little: the tasks the agent fails
-are not failed for want of seeing the page. The per-task results are in
-`results/dom_vs_dual.md`.
+</details>
 
-### Viewing runs in Opik (optional)
+<details>
+<summary><b>Viewing runs in Opik (optional)</b></summary>
 
-Every run folder is complete evidence, but it is read one folder at a time.
+<br/>
+
 `waa export --to opik` copies finished runs to [Opik](https://github.com/comet-ml/opik),
-an open-source viewer for AI agent traces, to look at many together: each step
-on a timeline with its annotated screenshot inline, and one experiment per arm
-of a comparison, so two arms can be compared task by task.
+an open-source viewer for AI agent runs: each step on a timeline with its
+screenshot, and each arm of a comparison as an experiment, to compare task by
+task.
 
 ```bash
-uv sync --extra opik                        # the optional package
-uv run waa export --to opik runs/           # every sweep in runs/
-uv run waa export --to opik runs/modality-openrouter runs/modality-openrouter-text
+uv run --extra opik waa export --to opik runs/example
 ```
 
-It is a separate step after the runs, reading folders they already wrote, so
-it cannot change how a run behaves; the run folders and results tables stay
-the record. Opik Cloud's free tier needs `WAA_OPIK_API_KEY` in `.env`; a
-self-hosted Opik needs only its address, `WAA_OPIK_URL`. With neither, the
-command says so and sends nothing, and nothing else in the project needs the
-package or an account.
+It reads folders runs have already written, so it cannot change a run; the run
+folders stay the record. It sends numbers and screenshots only: never the
+task's wording, the page's text, or what the AI wrote. Spans use the
+OpenTelemetry names for AI systems (`gen_ai.operation.name`,
+`gen_ai.request.model`, `gen_ai.usage.input_tokens`…), keep the times the run
+recorded, and get ids made from the run's own, so exporting twice does not
+duplicate anything. Opik Cloud needs `WAA_OPIK_API_KEY`; a self-hosted Opik
+needs only `WAA_OPIK_URL`.
 
-What is sent: a trace per run, with its verdict and failure category; a span
-per step with its screenshot; a span per model call and per browser action,
-named after the OpenTelemetry conventions for AI systems
-(`gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`,
-and so on), with tokens, cost and timing. Every span keeps the times the run
-recorded, and its id is made from the run's own, so exporting a run twice
-does not duplicate it. What is not sent: the task's wording, the page's text,
-what the model replied or typed, or any address it chose. Those stay in the
-run folder.
+</details>
 
-### Exit codes
+<details>
+<summary><b>Development and tests</b></summary>
 
-| Code | Meaning |
+<br/>
+
+```bash
+git config core.hooksPath .githooks   # once per clone
+uv sync                               # runtime and development dependencies
+uv run pytest                         # everything except live tests
+uv run pytest -m live                 # opt in: needs network and a key
+```
+
+Every test carries exactly one marker saying what it needs, and collection
+fails without one, because the marker decides whether continuous integration
+runs it:
+
+| Marker | Needs |
 |---|---|
-| `0` | It worked |
-| `1` | The command ran and the work did not succeed — a task the agent could not complete |
-| `2` | The command could not be run at all — an unknown flag, a bad setting |
+| `unit` | nothing: pure Python |
+| `fixture` | the practice website in `tests/fixtures/site/`, served locally |
+| `mock_llm` | recorded or scripted AI replies |
+| `live` | the real web or a real AI service (never run in CI) |
 
-The difference between `1` and `2` is there to be used: a benchmark script
-records a failed task and carries on, but stops on `2`, since a mistyped flag
-of its own would be repeated by every remaining invocation.
-
-## Configuration
-
-The model endpoint is pure configuration — base URL, API key, and model name.
-The same code runs unmodified against a hosted aggregator, a first-party
-provider endpoint, or a local vLLM deployment. Copy `.env.example` to `.env`
-and fill in the values.
-
-Endpoints are described in `src/web_action_agent/profiles.yaml` as named
-*profiles*: base URL, the variable holding the key, the text model, and the
-vision-language model used when an observation carries a screenshot. Three ship
-— `openrouter`, `nvidia`, and `local` — and one is selected per run with
-`--profile`. Where an aggregator routes one model to several hosts, the profile
-pins the host, so a benchmark number can be reproduced later.
-
-Settings resolve in three layers, lowest precedence first: `config.yaml` for
-the checked-in defaults, `.env` for machine-local overrides and every secret,
-then command-line flags. `.env` is gitignored; an API key is never read from
-`config.yaml`, and a setting there whose name says it holds one is rejected by
-name with a message pointing at `.env`. `.env.example` lists every variable the
-agent reads, with names and defaults but no values.
-
-### What your keys make available
-
-No account is needed to read, install, or test this project: the offline suite
-runs on a local static site with no network and no key. Only running a task
-needs an endpoint. Every command prints, before it does anything, what the keys
-it found actually enable:
-
-```
-capabilities:
-  [ok] agent    profile 'openrouter' -> nvidia/nemotron-3-nano-30b-a3b
-  [ok] vision   screenshots go to nvidia/nemotron-3.5-super-vl
-  [--] judge    no judge endpoint: set WAA_JUDGE_PROFILE, ...
-```
-
-Nothing there is fatal. Running tasks needs the agent endpoint; reproducing the
-published evaluation additionally needs a judge, which is deliberately a
-different model family from the planner. A missing judge is a line in the
-report rather than an error, so the failure it prevents — a benchmark that
-quietly skipped grading — cannot happen unnoticed.
-
-The report names variables, never values. Keys are read from the environment
-and `.env` alone, and every message the agent prints, logs, or writes into a
-run's trace is scrubbed of them first.
-
-## Development
-
-A `uv`-managed `.venv` is the development environment; a system or user Python
-is never used directly.
-
-```bash
-git config core.hooksPath .githooks   # required once per clone
-uv venv                               # Python from .python-version
-uv sync                               # runtime + dev dependencies, from uv.lock
-uv run pytest
-```
-
-Every command runs through `uv run`, or inside the activated `.venv`.
-
-Dependencies are declared in `pyproject.toml` and pinned in `uv.lock`.
-`requirements.txt` is generated from that lockfile — never edited by hand — and
-regenerated whenever the lockfile changes:
+Continuous integration runs the linter (`ruff`), the offline suite on a cached
+Chromium, and a plain `pip install -r requirements.txt` on a machine without
+`uv`. `requirements.txt` is generated from `uv.lock`, never edited by hand:
 
 ```bash
 uv export --format requirements-txt --no-hashes --no-dev --no-editable -o requirements.txt
 ```
 
-### Tests
+</details>
 
-Every test declares what it needs to run, with exactly one marker. Collection
-fails if a test declares none, or more than one — the marker is what decides
-whether continuous integration runs it, so an unmarked test is one nobody is
-running.
+<details>
+<summary><b>Safety</b></summary>
 
-| Marker | Needs |
-|---|---|
-| `unit` | Nothing — pure Python, no browser and no network |
-| `fixture` | The static HTML site in `tests/fixtures/site/`, served locally |
-| `mock_llm` | Stubbed or recorded model responses |
-| `live` | The real web or a real model endpoint |
+<br/>
 
-```bash
-uv run pytest                      # everything except live
-uv run pytest -m unit              # one kind
-uv run pytest -m live              # opt in explicitly; needs network and a key
-```
+- A fixed set of seven actions: no way to run code or scripts.
+- A validator checks every action before it reaches the browser.
+- Each run may visit only the site it started on (worked out with the Public
+  Suffix List, so `nlb.gov.sg` never means all of `gov.sg`), plus sites listed
+  in the settings.
+- Hard limits: 25 steps, 30 seconds per browser action, 90 seconds per AI call,
+  5 minutes per run, and a spending ceiling for every benchmark run.
+- No logins, purchases, or anything that changes data on a site.
+- Keys never appear in anything the program prints, logs, or saves.
 
-A bare `uv run pytest` excludes `live`, so the default run is offline, free,
-and needs no API key.
-
-### Continuous integration
-
-Pull requests run three jobs: `ruff check` and `ruff format --check`; the
-offline suite (`unit or fixture or mock_llm`) against a cached Chromium; and an
-install from `requirements.txt` into a plain virtual environment on a runner
-with no `uv`, which is what keeps the lockfile and the exported manifest from
-drifting apart. The test job asserts up front that its selection reaches no
-`live` test, and prints both counts.
-
-## Safety
-
-- Closed action space — no arbitrary code or script execution path
-- A validator gates every action before it reaches the browser
-- Domain allowlist enforced on all navigation
-- Configurable hard step cap per run
-- No login-gated, transactional, or destructive interactions
-
-Each run may visit the *registrable domain* of its start URL — `nlb.gov.sg` for
-a run starting on `catalogue.nlb.gov.sg`, never the whole of `gov.sg` — plus
-any domains in `allowlist_extra` and any the task itself declares. The boundary
-is computed from a packaged copy of the Public Suffix List, so a lookalike, or
-a neighbour registered under the same multi-part ending, is refused. The list
-is fixed before the first step; going anywhere else is a correctable error
-handed back to the planner, not a crash.
+</details>
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
