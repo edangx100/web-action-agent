@@ -251,6 +251,36 @@ def test_ipv6_spellings_of_this_machine_count_as_this_machine() -> None:
 
 
 @pytest.mark.unit
+def test_lines_with_a_padded_process_number_are_read_too() -> None:
+    # strace 6.1, in the CI container, writes two spaces after the process
+    # number where 5.16 writes one. Copied from that log.
+    lines = [
+        (
+            "1791  connect(3<TCP:[16707]>, {sa_family=AF_INET, sin_port=htons(39753), "
+            'sin_addr=inet_addr("127.0.0.1")}, 16) = -1 EINPROGRESS (Operation now in progress)'
+        ),
+        (
+            '1791  sendto(3<TCP:[127.0.0.1:55022->127.0.0.1:39753]>, "POST /v1/chat/completions '
+            'HTTP/1"..., 525, 0, NULL, 0) = 525'
+        ),
+        (
+            "2017  connect(18<UDPv6:[18403]>, {sa_family=AF_INET6, sin6_port=htons(443), "
+            'sin6_flowinfo=htonl(0), inet_pton(AF_INET6, "2001:4860:4860::8888", &sin6_addr), '
+            "sin6_scope_id=0}, 28) = -1 ENETUNREACH (Network is unreachable)"
+        ),
+    ]
+
+    calls = offline_eval.network_calls_in(lines)
+
+    assert [(c.call, c.protocol, c.port) for c in calls] == [
+        ("connect", "TCP", 39753),
+        ("sendto", "TCP", 39753),
+        ("connect", "UDP", 443),
+    ]
+    assert offline_eval.network_problems(calls) == []
+
+
+@pytest.mark.unit
 def test_seeing_no_connection_at_all_is_a_problem() -> None:
     # The run always reaches the local site, so an empty log means the
     # watching failed -- not that the run was clean.

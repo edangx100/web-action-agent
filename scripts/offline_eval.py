@@ -90,8 +90,10 @@ DNS_PORT = 53
 #: ``1234 connect(18<UDPv6:[285619]>`` or
 #: ``1234 sendto(3<TCP:[127.0.0.1:52344->127.0.0.1:44535]>``.
 #: Files, pipes and local (UNIX) sockets have other kinds and are skipped:
-#: they cannot leave the machine.
-INTERNET_CALL = re.compile(r"^\d+ (\w+)\(\d+<(TCP|UDP)(?:v6)?:\[(.*?)\]>")
+#: they cannot leave the machine. Newer strace versions pad the process
+#: number with extra spaces ("1791  connect("), so any number of spaces is
+#: accepted.
+INTERNET_CALL = re.compile(r"^\d+\s+(\w+)\(\d+<(TCP|UDP)(?:v6)?:\[(.*?)\]>")
 
 #: The far end of a connected socket, inside its description:
 #: ``127.0.0.1:52344->127.0.0.1:44535`` or ``[::1]:5000->[::1]:6000``.
