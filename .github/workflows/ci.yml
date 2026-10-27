@@ -106,3 +106,55 @@ jobs:
         run: |
           /tmp/consumer/bin/waa --help
           /tmp/consumer/bin/python -m web_action_agent --help
+
+  rerun-from-scratch:
+    # The promise to anyone who finds this project: you can re-run the
+    # evaluation yourself, with no account anywhere. This job is that person.
+    # A fresh container that has never seen the project installs it from
+    # `requirements.txt` alone, has no API key, and runs the whole evaluation
+    # -- `waa eval`, real browsers, the checks, the results tables -- against
+    # the practice site and a stand-in model, both on this machine. Every
+    # network call is recorded, and the job fails if any reached another
+    # machine.
+    name: Re-run the evaluation from scratch (no key, nothing leaves the machine)
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.11-slim-bookworm
+      # strace watches the run by tracing it, which a container may only do
+      # when allowed to.
+      options: --cap-add=SYS_PTRACE
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the network watcher (strace)
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends strace
+
+      - name: Install from requirements.txt alone
+        run: |
+          python -m venv /opt/waa
+          /opt/waa/bin/pip install --disable-pip-version-check -q -r requirements.txt
+          /opt/waa/bin/playwright install --with-deps chromium
+
+      # Names only, never values. Nothing here is passed a secret, so this
+      # should always find none; it is checked so the claim is not assumed.
+      - name: Confirm no API key is set
+        run: |
+          found=$(env | cut -d= -f1 | grep -iE '^WAA_|API_KEY|API_TOKEN' || true)
+          if [ -n "$found" ]; then echo "settings that should not be here: $found"; exit 1; fi
+          echo "no API key or project setting in the environment"
+
+      - name: Run the whole evaluation, watching every network call
+        run: /opt/waa/bin/python scripts/offline_eval.py --workdir /tmp/offline --watch-network
+
+      # The run folders, the results tables and the network log, kept for a
+      # week so a failure can be looked into, or a pass looked at.
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rerun-from-scratch
+          path: |
+            /tmp/offline/results
+            /tmp/offline/runs
+            /tmp/offline/network.log
+          retention-days: 7

@@ -233,17 +233,38 @@ then `playwright install chromium`.
 ### 2. Check it works, with no account at all
 
 ```bash
-uv run pytest                        # ~1,600 tests, offline, no API key
+uv run pytest                           # ~1,600 tests, offline, no API key
+uv run python scripts/offline_eval.py   # the whole evaluation, end to end, no key
 ```
 
 The tests use a small practice website served from your own machine, so they
 need no network, no key and no money.
 
+The second command runs the evaluation itself: the same `waa eval` that
+produced every result below. It swaps the two things you may not have for
+stand-ins on your own machine, and nothing else:
+
+| | The real benchmark | `scripts/offline_eval.py` |
+|---|---|---|
+| **Websites** | 5 Singapore government sites | a practice website, served on `127.0.0.1` |
+| **AI model** | a hosted model, reached with a key | a stand-in on `127.0.0.1` that reads the page title and answers |
+| **Browsers, agent, checks, results tables** | real | **the same, unchanged** |
+
+It takes under a minute, ends with `trials passed: 5 of 5`, and says where it
+wrote the run folders and results tables.
+
+> **Checked on every push.** A [CI job](.github/workflows/ci.yml) does exactly
+> this on a fresh container that has never seen the project: it installs from
+> `requirements.txt` alone, has no API key, and records every network call the
+> run makes (agent and browsers alike) with `strace`. It fails if any call
+> reaches another machine. On Linux, add `--watch-network` to make the same
+> check yourself.
+
 ### 3. What you need for each part
 
 | To | You need |
 |---|---|
-| Read the code, install, run the tests | **Nothing.** No account, no key. |
+| Read the code, install, run the tests, run the evaluation on the practice site | **Nothing.** No account, no key. |
 | Run the agent on a task (`waa run`) | **One AI endpoint**: any OpenAI-compatible service. The simplest is an [OpenRouter](https://openrouter.ai) key. An NVIDIA key, or a server you run yourself, also work. |
 | Reproduce the benchmark and its marks (`waa eval`) | The above, **plus a judge endpoint**. The suggested judge runs on the same OpenRouter key, so no second account. |
 | Look at runs in Opik (optional) | An [Opik](https://github.com/comet-ml/opik) key, or Opik running on your own machine. |
@@ -651,9 +672,16 @@ runs it:
 | `mock_llm` | recorded or scripted AI replies |
 | `live` | the real web or a real AI service (never run in CI) |
 
-Continuous integration runs the linter (`ruff`), the offline suite on a cached
-Chromium, and a plain `pip install -r requirements.txt` on a machine without
-`uv`. `requirements.txt` is generated from `uv.lock`, never edited by hand:
+Continuous integration runs four jobs:
+
+| Job | What it proves |
+|---|---|
+| Lint | `ruff` finds nothing, and the code is formatted |
+| Test | the offline suite passes, on a cached Chromium |
+| Install from `requirements.txt` | the project installs on a machine without `uv` |
+| Re-run the evaluation from scratch | a fresh container, with no key, runs `scripts/offline_eval.py --watch-network`, and no network call leaves the machine |
+
+`requirements.txt` is generated from `uv.lock`, never edited by hand:
 
 ```bash
 uv export --format requirements-txt --no-hashes --no-dev --no-editable -o requirements.txt
