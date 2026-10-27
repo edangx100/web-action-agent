@@ -21,5 +21,5 @@ Over every sweep above together. Agreement is the share of hand-labelled trials 
 
 | Measure | Value |
 |---|---|
-| Judge–human agreement: pass or fail | not yet measured (no human labels) |
-| Judge–human agreement: kind of failure (trials both called a fail) | not yet measured (no human labels) |
+| Judge–human agreement: pass or fail | 100.0% (20 of 20 trials) · Cohen's κ 1.00 (almost perfect) |
+| Judge–human agreement: kind of failure (trials both called a fail) | 90.9% (10 of 11 trials) · Cohen's κ 0.63 (substantial) · only 11 labelled, fewer than the 20 needed to rely on this: treat as a rough guide |

@@ -16,8 +16,8 @@ Evaluated: sweep started 2026-10-18T05:26:56.054233+00:00; last trial marked 202
 | Average time per trial | 108.0 s |
 | Average cost per trial (agent) | $0.0042 |
 | Cost of judging (not the agent) | $0.1546 over 30 calls |
-| Judge–human agreement: pass or fail | not yet measured (no human labels) |
-| Judge–human agreement: kind of failure (trials both called a fail) | not yet measured (no human labels) |
+| Judge–human agreement: pass or fail | 100.0% (3 of 3 trials) · Cohen's κ 1.00 (almost perfect) · only 3 labelled, fewer than the 20 needed to rely on this: treat as a rough guide |
+| Judge–human agreement: kind of failure (trials both called a fail) | 100.0% (2 of 2 trials) · Cohen's κ undefined: every trial was labelled 'planning' by both sides, so chance alone would agree every time · only 2 labelled, fewer than the 20 needed to rely on this: treat as a rough guide |
 
 Agreement is the share of hand-labelled trials where the machine's mark and a person's matched. Cohen's κ discounts the agreement the two would reach by chance alone: 1 is perfect, 0 is no better than chance.
 

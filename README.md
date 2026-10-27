@@ -141,7 +141,7 @@ agent is NVIDIA's open **Nemotron 3 Nano** model unless a row says otherwise.
 | Is it tied to one AI model? | **No.** Three models from three makers scored **42%, 33% and 33%**, and the same tasks defeated all three. | [Three AI models](#2-three-ai-models) |
 | Does it need one particular AI service? | **No.** The same code passed through an AI marketplace, NVIDIA's own service, and a server we ran ourselves, **3 of 3**. | [Three AI services](#3-three-ways-to-reach-the-ai) |
 | Do screenshots help? | **Barely, on these sites.** Reading pages as text alone passed 10 of 24 trials; adding screenshots when needed, 11 of 24, for **10% more cost**. | [Screenshots](#4-what-screenshots-buy) |
-| Does the AI judge agree with a person? | **Not measured yet.** The tool is built; the hand labels are still to be done. | [The judge](#5-the-judge-and-a-person) |
+| Do the machine's marks agree with a person? | **Yes, on pass or fail: 20 of 20.** On why a run failed, 10 of 11. Only 20 runs were checked. | [The judge](#5-the-judge-and-a-person) |
 
 Each sweep's full tables, task by task, are in [`results/`](results/README.md).
 
@@ -377,10 +377,33 @@ mark last, and records their verdict. From about 20 such labels the project
 reports how often the two agree, as a plain percentage and as Cohen's kappa,
 which discounts agreement that would happen by luck.
 
-**That measurement has not been made yet.** The tool and the statistics are
-built and tested, but the hand labels have not been collected, so no agreement
-figure is published. [`results/README.md`](results/README.md) says the same,
-and will carry the figure once the labels exist.
+**What a person found.** 20 runs were labelled by hand, spread across the
+sweeps and tasks so no one task dominates. The person saw the evidence first
+and the machine's mark last.
+
+| What was compared | Agreed | Cohen's κ |
+|---|---|---|
+| Pass or fail | **20 of 20** (100%) | 1.00 |
+| Why it failed, on the 11 runs both called a fail | **10 of 11** (91%) | 0.63 |
+
+Read these with care:
+
+- **Most pass-or-fail marks come from code, not the judge.** Only 5 of the 20
+  runs were on tasks where the judge decides pass or fail; the other 15 were
+  decided by the answer and page checks. The 20 of 20 says the whole marking
+  matched a person, not the judge alone.
+- **The cause of failure is all the judge's.** There, the one disagreement was
+  the Ministry of Manpower pop-up run (see [why tasks fail](#why-tasks-fail)).
+  The judge called it *navigation*, because the agent never reached the right
+  page. The person called it *planning*, because the agent never left the home
+  page: the way past the pop-up was on screen, and it scrolled instead.
+- **20 is a small sample.** 20 of 20 does not mean the marks are never wrong.
+  It means a wrong pass-or-fail mark is probably rarer than about 1 in 7. The
+  cause figure rests on only 11 runs, so it is a rough guide.
+
+The labels are in [`results/human_labels.jsonl`](results/human_labels.jsonl),
+one line per run, with the machine's mark beside each, and the figures in
+[`results/README.md`](results/README.md).
 
 ## Why tasks fail
 
@@ -463,7 +486,8 @@ pop-up before anything else is the clearest next improvement.
 - **Small samples.** Two or three trials per task; differences of a trial or
   two are noise, as the cold-vs-warm split shows.
 - **iframes and shadow DOM** (pages embedded inside pages) are not looked into.
-- **The judge is not yet checked against a person** (see above).
+- **The judge is checked against a person on only 20 runs**, and only 11 for
+  the cause of failure (see above).
 
 ## Reference
 
