@@ -1,0 +1,1170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Teaching an AI to Browse</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="A beginner's tour of web-action-agent: an AI that answers questions by clicking through real websites, is marked by code instead of trusted, and learns shortcuts from runs that worked.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=STIX+Two+Text:ital,wght@0,500;1,500&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one calm reading column on a dark chalkboard, figures drawn in the same colours the words use.
+   Colour carries meaning everywhere: blue = what the agent sees, yellow = what the AI decides,
+   green = a check that passed, red = rejected or wrong, brown = a learned skill. */
+:root {
+  color-scheme: dark;
+  --bg: #1b1f27;
+  --surface: #232833;
+  --surface-2: #2a303c;
+  --line: #343b48;
+  --line-strong: #4b5363;
+  --ink: #eef1f5;
+  --fg: #d5dae2;
+  --soft: #a3acba;
+  --faint: #7a8494;
+  --blue: #74b8d9;
+  --blue-tint: rgba(116,184,217,.14);
+  --yellow: #e2c370;
+  --yellow-tint: rgba(226,195,112,.16);
+  --green: #92c48f;
+  --green-tint: rgba(146,196,143,.15);
+  --red: #e3907f;
+  --red-tint: rgba(227,144,127,.15);
+  --brown: #c89d6e;
+  --brown-tint: rgba(200,157,110,.14);
+  --scrim: rgba(4,6,10,.58);
+  --glass: rgba(27,31,39,.86);
+
+  --font-display: "STIX Two Text", "Cambria", "Georgia", serif;
+  --font-body: "Literata", "Georgia", "Iowan Old Style", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --scale: 1;
+  --measure: 39rem;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #f3f5f8;
+    --surface: #ffffff;
+    --surface-2: #e9edf2;
+    --line: #d7dde5;
+    --line-strong: #b4bdca;
+    --ink: #18202b;
+    --fg: #2b3441;
+    --soft: #55606f;
+    --faint: #868f9d;
+    --blue: #2b72a0;
+    --blue-tint: rgba(43,114,160,.11);
+    --yellow: #956a0c;
+    --yellow-tint: rgba(196,146,30,.15);
+    --green: #3a7b45;
+    --green-tint: rgba(58,123,69,.12);
+    --red: #b24e3b;
+    --red-tint: rgba(178,78,59,.11);
+    --brown: #86602f;
+    --brown-tint: rgba(134,96,47,.12);
+    --scrim: rgba(24,30,40,.42);
+    --glass: rgba(243,245,248,.88);
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --surface-2: #e9edf2;
+  --line: #d7dde5;
+  --line-strong: #b4bdca;
+  --ink: #18202b;
+  --fg: #2b3441;
+  --soft: #55606f;
+  --faint: #868f9d;
+  --blue: #2b72a0;
+  --blue-tint: rgba(43,114,160,.11);
+  --yellow: #956a0c;
+  --yellow-tint: rgba(196,146,30,.15);
+  --green: #3a7b45;
+  --green-tint: rgba(58,123,69,.12);
+  --red: #b24e3b;
+  --red-tint: rgba(178,78,59,.11);
+  --brown: #86602f;
+  --brown-tint: rgba(134,96,47,.12);
+  --scrim: rgba(24,30,40,.42);
+  --glass: rgba(243,245,248,.88);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  font-size: calc(100% * var(--scale));
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 1.125rem;
+  line-height: 1.72;
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto;
+  height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg);
+}
+::selection { background: var(--yellow-tint); color: var(--ink); }
+
+.wrap {
+  max-width: calc(var(--measure) + 40px);
+  margin: 0 auto;
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+  padding-block: 6.5rem 7rem;
+}
+main { display: flex; flex-direction: column; gap: 5.5rem; }
+section { display: flex; flex-direction: column; gap: 1.15rem; min-width: 0; scroll-margin-top: 4.5rem; }
+section > * { margin: 0; }
+.sub { display: flex; flex-direction: column; gap: 1.15rem; margin-top: 1.6rem; }
+.sub > * { margin: 0; }
+
+/* Type */
+h1, h2, h3 { font-family: var(--font-display); font-weight: 500; color: var(--ink); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2.35rem, 7vw, 3.4rem); line-height: 1.08; letter-spacing: -0.01em; }
+h2 { font-size: clamp(1.7rem, 4.6vw, 2.15rem); line-height: 1.18; }
+h3 { font-size: 1.32rem; line-height: 1.3; font-style: italic; }
+p { text-wrap: pretty; }
+strong { color: var(--ink); font-weight: 600; }
+em { font-style: italic; }
+a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+a:hover { text-decoration-thickness: 2px; }
+code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+code { background: var(--surface-2); padding: 0.1em 0.38em; border-radius: 5px; color: var(--ink); white-space: nowrap; }
+.eyebrow {
+  font-family: var(--font-body); font-size: 0.78rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--faint); font-weight: 600;
+}
+.part { display: flex; flex-direction: column; gap: 0.5rem; }
+.part .eyebrow { color: var(--soft); }
+.question { font-family: var(--font-display); font-style: italic; font-size: 1.28rem; line-height: 1.5; color: var(--ink); }
+
+/* Header */
+header.hero { display: flex; flex-direction: column; gap: 1.4rem; margin-bottom: 4.5rem; }
+.dek { font-size: 1.3rem; line-height: 1.55; color: var(--ink); font-family: var(--font-display); }
+.intro { color: var(--fg); }
+
+.key { display: flex; flex-wrap: wrap; gap: 0.5rem 1.1rem; font-size: 0.95rem; color: var(--soft); padding-top: 0.25rem; }
+.key span { display: inline-flex; align-items: center; gap: 0.45rem; }
+.key i { width: 0.8rem; height: 0.8rem; border-radius: 50%; display: inline-block; }
+
+.route { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0 1.5rem; counter-reset: r; border-top: 1px solid var(--line); padding-top: 1rem; }
+.route li { counter-increment: r; }
+.route a { display: flex; gap: 0.7rem; align-items: baseline; min-height: 44px; padding-block: 0.55rem; color: var(--fg); text-decoration: none; font-size: 1rem; }
+.route a::before { content: counter(r); font-family: var(--font-mono); font-size: 0.8rem; color: var(--yellow); min-width: 1rem; }
+.route a:hover span { text-decoration: underline; text-underline-offset: 3px; }
+
+/* Figures */
+figure { margin: 0.6rem 0 0.4rem; display: flex; flex-direction: column; gap: 0.9rem; min-width: 0; }
+figure svg { display: block; width: 100%; height: auto; overflow: visible; }
+figcaption { font-size: 0.93rem; line-height: 1.6; color: var(--soft); font-style: italic; max-width: 36rem; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 1.2rem; display: flex; flex-direction: column; gap: 1rem; }
+
+/* SVG ink */
+svg text { font-family: var(--font-body); fill: var(--soft); }
+svg .ink { fill: var(--ink); }
+svg .fg { fill: var(--fg); }
+svg .faint { fill: var(--faint); }
+svg .mono { font-family: var(--font-mono); }
+svg .c-blue { fill: var(--blue); } svg .c-yellow { fill: var(--yellow); } svg .c-green { fill: var(--green); }
+svg .c-red { fill: var(--red); } svg .c-brown { fill: var(--brown); } svg .c-bg { fill: var(--bg); }
+svg .s11 { font-size: 12px; } svg .s12 { font-size: 13px; } svg .s13 { font-size: 13.5px; } svg .s14 { font-size: 14px; }
+svg .s15 { font-size: 15px; } svg .s16 { font-size: 16px; } svg .s18 { font-size: 18px; }
+svg .b { font-weight: 600; }
+svg .it { font-style: italic; }
+.frame { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.2; }
+.frame-plain { fill: none; stroke: var(--line-strong); stroke-width: 1.2; }
+.bar-faint { fill: var(--line); }
+.stroke-blue { stroke: var(--blue); } .stroke-yellow { stroke: var(--yellow); } .stroke-green { stroke: var(--green); }
+.stroke-red { stroke: var(--red); } .stroke-brown { stroke: var(--brown); } .stroke-soft { stroke: var(--soft); } .stroke-faint { stroke: var(--faint); }
+.stroke-line { stroke: var(--line-strong); }
+.nofill { fill: none; }
+.tag rect { fill: var(--blue); }
+.tag text { fill: var(--bg); font-family: var(--font-mono); font-size: 11px; font-weight: 500; }
+.arrow { fill: none; stroke-width: 1.8; stroke-linecap: round; }
+.dash { stroke-dasharray: 5 5; }
+
+/* Buttons: real <button>s, 44px tall, no hover-only behaviour, no double-tap zoom */
+.controls { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+.btn {
+  appearance: none; -webkit-appearance: none;
+  min-height: 44px; min-width: 44px; padding: 0 1.15rem;
+  border-radius: 999px; border: 1px solid var(--line-strong);
+  background: var(--surface-2); color: var(--ink);
+  font: 500 0.98rem/1 var(--font-body);
+  cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  user-select: none; -webkit-user-select: none;
+  transition: background-color .18s ease, border-color .18s ease, transform .08s ease;
+}
+.btn:hover { border-color: var(--soft); }
+.btn:active { transform: scale(0.97); }
+.btn:disabled { opacity: 0.4; cursor: default; transform: none; }
+.btn.primary { background: var(--yellow-tint); border-color: var(--yellow); }
+.btn[aria-pressed="true"] { background: var(--blue-tint); border-color: var(--blue); }
+.btn.mono-btn { font-family: var(--font-mono); font-size: 0.9rem; }
+.btn:focus-visible, a:focus-visible { outline: 2px solid var(--yellow); outline-offset: 3px; }
+
+/* Reading tools: theme + text size */
+.tools {
+  position: fixed; z-index: 20;
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  right: calc(env(safe-area-inset-right, 0px) + 12px);
+  display: flex; gap: 4px; padding: 4px;
+  background: var(--glass); border: 1px solid var(--line); border-radius: 999px;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+.tools .btn { padding: 0; width: 44px; height: 44px; background: transparent; border-color: transparent; font-size: 0.95rem; display: grid; place-items: center; }
+.tools .btn:hover { border-color: var(--line-strong); }
+.tools svg { width: 20px; height: 20px; }
+.tools svg path, .tools svg circle { fill: none; stroke: var(--ink); stroke-width: 1.6; }
+.tools svg .half { fill: var(--ink); stroke: none; }
+
+/* Chips for the seven actions */
+.chips { display: flex; flex-wrap: wrap; gap: 0.5rem; list-style: none; padding: 0; margin: 0; }
+.chips li { font-family: var(--font-mono); font-size: 0.88rem; padding: 0.35rem 0.8rem; border-radius: 999px; border: 1px solid var(--yellow); background: var(--yellow-tint); color: var(--ink); }
+.chips li.skill { border-color: var(--brown); background: var(--brown-tint); }
+
+/* Terminal-ish readout */
+.term {
+  font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.7;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 10px;
+  padding: 0.8rem 0.95rem; margin: 0; overflow-x: auto; white-space: pre; min-height: 3.2rem;
+  -webkit-overflow-scrolling: touch;
+}
+.term .ok { color: var(--green); }
+.term .muted { color: var(--faint); }
+.term .ans { color: var(--yellow); }
+.readout { display: flex; flex-direction: column; gap: 0.3rem; min-height: 6.2rem; }
+.readout .label { font-size: 0.8rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--yellow); font-weight: 600; }
+.readout p { margin: 0; color: var(--fg); font-size: 1.02rem; line-height: 1.6; }
+.verdict { display: flex; flex-direction: column; gap: 0.35rem; min-height: 5.5rem; }
+.verdict .code { font-family: var(--font-mono); font-size: 0.85rem; }
+.verdict .code.ok { color: var(--green); } .verdict .code.no { color: var(--red); }
+.verdict p { margin: 0; font-size: 1rem; line-height: 1.6; }
+
+/* Marks figure state */
+#marksFig .marks, #marksFig .said-marked { opacity: 0; transition: opacity .35s ease; }
+#marksFig .unsure, #marksFig .said-plain { opacity: 1; transition: opacity .35s ease; }
+#marksFig.is-marked .marks, #marksFig.is-marked .said-marked { opacity: 1; }
+#marksFig.is-marked .unsure, #marksFig.is-marked .said-plain { opacity: 0; }
+#marksList[hidden] { display: none !important; }
+
+/* Loop figure state */
+.node rect { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.4; transition: fill .25s ease, stroke .25s ease; }
+.node text { fill: var(--fg); font-size: 17px; font-family: var(--font-display); }
+.node.on.look rect { fill: var(--blue-tint); stroke: var(--blue); }
+.node.on.decide rect { fill: var(--yellow-tint); stroke: var(--yellow); }
+.node.on.check rect { fill: var(--green-tint); stroke: var(--green); }
+.node.on.act rect { fill: var(--blue-tint); stroke: var(--blue); }
+.node.on.mark rect { fill: var(--green-tint); stroke: var(--green); }
+.node.on text { fill: var(--ink); }
+
+/* Gate figure state */
+#gateSvg .pass-path, #gateSvg .fail-path { opacity: 0.15; transition: opacity .3s ease; }
+#gateSvg.state-pass .pass-path { opacity: 1; }
+#gateSvg.state-fail .fail-path { opacity: 1; }
+
+/* Lists */
+.takeaways { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1.1rem; counter-reset: t; }
+.takeaways li { counter-increment: t; display: grid; grid-template-columns: 2rem 1fr; gap: 0.2rem; }
+.takeaways li::before { content: counter(t); font-family: var(--font-display); font-style: italic; color: var(--yellow); font-size: 1.3rem; line-height: 1.5; }
+.takeaways strong { display: block; }
+.defs { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 0.5rem 1.1rem; font-size: 1rem; }
+.defs dt { color: var(--ink); font-weight: 600; }
+.defs dd { margin: 0; color: var(--soft); }
+@media (max-width: 30rem) { .defs { grid-template-columns: 1fr; gap: 0.1rem; } .defs dd { margin-bottom: 0.6rem; } }
+
+.aside { border-left: 2px solid var(--line-strong); padding-left: 1rem; color: var(--soft); font-size: 1rem; }
+hr.quiet { border: 0; height: 1px; background: var(--line); margin: 0; width: 100%; }
+.end { color: var(--soft); font-size: 1rem; }
+
+@media (max-width: 30rem) {
+  body { font-size: 1.0625rem; line-height: 1.7; }
+  .wrap { padding-block: 5.5rem 5rem; }
+  main { gap: 4.5rem; }
+  .panel { padding: 1rem 0.85rem; border-radius: 14px; }
+  .dek { font-size: 1.18rem; }
+  section > figure > svg, .sub > figure > svg { width: calc(100% + 24px); max-width: none; margin-inline: -12px; }
+  .panel { padding-inline: 0.7rem; }
+}
+.tools { transition: transform .3s ease, opacity .3s ease; }
+.tools.tucked { transform: translateY(calc(-100% - 16px - env(safe-area-inset-top, 0px))); opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="tools" role="group" aria-label="Reading settings">
+  <button class="btn" type="button" id="smaller" aria-label="Make text smaller">A−</button>
+  <button class="btn" type="button" id="larger" aria-label="Make text larger">A+</button>
+  <button class="btn" type="button" id="themeBtn" aria-label="Switch to light theme">
+    <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.2"/><path class="half" d="M10 2.8a7.2 7.2 0 0 1 0 14.4z"/></svg>
+  </button>
+</div>
+
+<div class="wrap">
+
+<header class="hero">
+  <span class="eyebrow">A beginner's tour of web-action-agent</span>
+  <h1>Teaching an AI to Browse</h1>
+  <p class="dek">An AI that answers questions by clicking through real websites, is marked by code instead of trusted, and learns shortcuts from the runs that worked.</p>
+  <p class="intro">You already know how to find something on a website. You look at the page, pick a link, look again, and keep going until the answer is in front of you. A chatbot can't do this on its own. It can read and write words, but it has no mouse, and no reliable way to say which button it means. This project gives an AI those missing pieces, sends it to five Singapore government websites with twelve real questions, and measures how often it gets them right.</p>
+  <div class="key" aria-label="Colour key used in every figure">
+    <span><i style="background:var(--blue)"></i>what the agent sees</span>
+    <span><i style="background:var(--yellow)"></i>what the AI decides</span>
+    <span><i style="background:var(--green)"></i>a check that passed</span>
+    <span><i style="background:var(--red)"></i>rejected or wrong</span>
+    <span><i style="background:var(--brown)"></i>a learned skill</span>
+  </div>
+  <nav aria-label="Reading order">
+    <ol class="route">
+      <li><a href="#question"><span>One question, one right answer</span></a></li>
+      <li><a href="#pointing"><span>Reading isn't pointing</span></a></li>
+      <li><a href="#loop"><span>The loop, one step at a time</span></a></li>
+      <li><a href="#marked"><span>Marked, not trusted</span></a></li>
+      <li><a href="#skills"><span>Learning shortcuts</span></a></li>
+      <li><a href="#results"><span>Did it work?</span></a></li>
+      <li><a href="#failures"><span>Why it fails</span></a></li>
+      <li><a href="#takeaways"><span>What to take away</span></a></li>
+    </ol>
+  </nav>
+</header>
+
+<main>
+
+<!-- ============ 1 ============ -->
+<section id="question">
+  <div class="part"><span class="eyebrow">Part 1</span><h2>One question, one right answer</h2></div>
+  <p>Here is the question the agent gets in the project's demo, in everyday words:</p>
+  <p class="question">In Singapore, if you earned $80,000 this year, how much income tax do you pay?</p>
+  <p>The agent may not answer from memory. It starts on the home page of IRAS, the country's tax office, and must find the answer on the site itself.</p>
+  <p>Singapore taxes income in slices. The first $20,000 is taxed at 0%, the next $10,000 at 2%, the next $10,000 at 3.5%, and so on. There is a pleasant way to picture this. Draw each slice as a rectangle whose <em>width</em> is the money in that slice and whose <em>height</em> is its tax rate. The tax on a slice is width times rate, which is exactly the rectangle's <em>area</em>.</p>
+
+  <figure>
+    <svg viewBox="0 0 480 262" role="img" aria-labelledby="taxT">
+      <title id="taxT">Tax as area: slices of income drawn as rectangles whose height is the rate. The shaded area up to $80,000 is $3,350.</title>
+      <text x="40" y="24" class="ink s15">Shaded area = tax on the first $80,000</text>
+      <text x="40" y="46" class="c-yellow s15">$0 + $200 + $350 + $2,800 = $3,350</text>
+      <!-- axes -->
+      <line x1="40" y1="200" x2="452" y2="200" class="stroke-soft" stroke-width="1.2"/>
+      <line x1="40" y1="200" x2="40" y2="76" class="stroke-faint" stroke-width="1"/>
+      <text x="34" y="86" class="faint s12" text-anchor="end">rate</text>
+      <!-- slices: 3.333 px per $1k, 10 px per 1% -->
+      <rect x="106.7" y="180" width="33.3" height="20" style="fill:var(--yellow-tint)" class="stroke-yellow" stroke-width="1.4"/>
+      <rect x="140" y="165" width="33.3" height="35" style="fill:var(--yellow-tint)" class="stroke-yellow" stroke-width="1.4"/>
+      <rect x="173.3" y="130" width="133.4" height="70" style="fill:var(--yellow-tint)" class="stroke-yellow" stroke-width="1.4"/>
+      <rect x="306.7" y="85" width="133.3" height="115" fill="none" class="stroke-faint dash" stroke-width="1.3"/>
+      <line x1="40" y1="200" x2="106.7" y2="200" class="stroke-yellow" stroke-width="2.4"/>
+      <!-- rate labels -->
+      <text x="73" y="192" class="s13" text-anchor="middle">0%</text>
+      <text x="123.3" y="173" class="s13" text-anchor="middle">2%</text>
+      <text x="156.7" y="158" class="s13" text-anchor="middle">3.5%</text>
+      <text x="240" y="123" class="s13" text-anchor="middle">7%</text>
+      <text x="373.3" y="78" class="s13 faint" text-anchor="middle">11.5%</text>
+      <!-- areas -->
+      <text x="240" y="171" class="ink s15" text-anchor="middle">$2,800</text>
+      <text x="373.3" y="146" class="faint s15" text-anchor="middle">$4,600</text>
+      <text x="373.3" y="166" class="faint s12 it" text-anchor="middle">the next slice</text>
+      <!-- x ticks -->
+      <text x="40" y="222" class="s12" text-anchor="middle">$0</text>
+      <text x="106.7" y="222" class="s12" text-anchor="middle">$20k</text>
+      <text x="173.3" y="222" class="s12" text-anchor="middle">$40k</text>
+      <text x="306.7" y="222" class="ink s12 b" text-anchor="middle">$80k</text>
+      <text x="440" y="222" class="s12" text-anchor="middle">$120k</text>
+      <text x="452" y="246" class="faint s12" text-anchor="end">income →</text>
+    </svg>
+    <figcaption>The tax on $80,000 is the shaded area. The dashed block is the next slice of income. One AI model read that row of the table by mistake, answered $4,600, and still announced success. Part 4 shows how it was caught.</figcaption>
+  </figure>
+
+  <p>So the right answer is <strong>$3,350</strong>. To reach it, the agent has to do what you would do: open the tax menu, follow the right links, and read the right row of a table. The rest of this page is about how each of those small acts is made reliable.</p>
+</section>
+
+<!-- ============ 2 ============ -->
+<section id="pointing">
+  <div class="part"><span class="eyebrow">Part 2</span><h2>An AI can read, but it can't point</h2></div>
+  <p>A language model reads text and writes text. Show it a screenshot and it can describe the page well. Ask it what to click, and it answers in words: <em>“the round button near the top.”</em> Something then has to turn that sentence back into one exact element on the page. That matching is a guess. When it guesses wrong, nothing crashes. The agent clicks the wrong thing and carries on.</p>
+  <p>The fix is an idea from published research called <strong>Set-of-Marks</strong>. Before the AI looks at the page, the agent draws a small number on everything a person could click, and gives the AI the same numbers as a list. Now the AI doesn't have to describe anything. It points: <em>“click 4.”</em> The 4 is a position in a list the agent is already holding, so there is nothing left to guess.</p>
+
+  <div class="panel">
+    <figure id="marksFig" style="margin:0">
+      <svg viewBox="0 0 480 360" role="img" aria-labelledby="marksT">
+        <title id="marksT">A simplified tax website. With numbers on, every clickable thing has a blue number tag and the AI replies "click 4".</title>
+        <!-- browser frame -->
+        <rect x="12" y="12" width="456" height="276" rx="12" class="frame"/>
+        <line x1="12" y1="40" x2="468" y2="40" class="stroke-line"/>
+        <circle cx="30" cy="26" r="4" style="fill:var(--line-strong)"/><circle cx="44" cy="26" r="4" style="fill:var(--line-strong)"/><circle cx="58" cy="26" r="4" style="fill:var(--line-strong)"/>
+        <rect x="78" y="19" width="200" height="14" rx="7" style="fill:var(--surface-2)"/>
+        <text x="90" y="30" class="faint s11 mono">iras.gov.sg</text>
+        <!-- nav -->
+        <rect x="28" y="56" width="56" height="24" rx="4" style="fill:var(--surface-2)"/>
+        <text x="56" y="73" class="fg s12 b" text-anchor="middle">HOME</text>
+        <text x="104" y="73" class="fg s14">About</text>
+        <text x="156" y="73" class="fg s14">News</text>
+        <text x="206" y="73" class="fg s14">Taxes</text>
+        <rect x="266" y="56" width="116" height="24" rx="12" style="fill:var(--surface-2)" class="stroke-line"/>
+        <text x="280" y="72" class="faint s12">Search…</text>
+        <rect x="392" y="56" width="58" height="24" rx="12" style="fill:var(--line-strong)"/>
+        <text x="421" y="72" class="ink s12" text-anchor="middle">Go</text>
+        <!-- body -->
+        <text x="28" y="116" class="ink s18" style="font-family:var(--font-display)">Find what you need</text>
+        <rect x="28" y="128" width="300" height="7" rx="3.5" class="bar-faint"/>
+        <rect x="28" y="142" width="240" height="7" rx="3.5" class="bar-faint"/>
+        <rect x="28" y="168" width="204" height="96" rx="8" style="fill:var(--surface-2)"/>
+        <text x="42" y="194" class="ink s14">Individual Income Tax</text>
+        <rect x="42" y="208" width="150" height="6" rx="3" class="bar-faint"/><rect x="42" y="220" width="120" height="6" rx="3" class="bar-faint"/>
+        <rect x="248" y="168" width="204" height="96" rx="8" style="fill:var(--surface-2)"/>
+        <text x="262" y="194" class="ink s14">Tax residency &amp; rates</text>
+        <rect x="262" y="208" width="150" height="6" rx="3" class="bar-faint"/><rect x="262" y="220" width="110" height="6" rx="3" class="bar-faint"/>
+
+        <!-- unsure: question marks -->
+        <g class="unsure">
+          <text x="56" y="52" class="c-red s16 b" text-anchor="middle">?</text>
+          <text x="324" y="52" class="c-red s16 b" text-anchor="middle">?</text>
+          <text x="421" y="52" class="c-red s16 b" text-anchor="middle">?</text>
+        </g>
+
+        <!-- marks -->
+        <g class="marks">
+          <rect x="25" y="53" width="62" height="30" rx="5" class="nofill stroke-blue" stroke-width="1.4"/>
+          <rect x="99" y="58" width="46" height="21" rx="4" class="nofill stroke-blue" stroke-width="1.4"/>
+          <rect x="151" y="58" width="44" height="21" rx="4" class="nofill stroke-blue" stroke-width="1.4"/>
+          <rect x="201" y="58" width="46" height="21" rx="4" class="nofill stroke-yellow" stroke-width="2.2"/>
+          <rect x="263" y="53" width="122" height="30" rx="14" class="nofill stroke-blue" stroke-width="1.4"/>
+          <rect x="389" y="53" width="64" height="30" rx="14" class="nofill stroke-blue" stroke-width="1.4"/>
+          <rect x="25" y="165" width="210" height="102" rx="10" class="nofill stroke-blue" stroke-width="1.4"/>
+          <rect x="245" y="165" width="210" height="102" rx="10" class="nofill stroke-blue" stroke-width="1.4"/>
+          <g class="tag"><rect x="18" y="45" width="18" height="16" rx="4"/><text x="27" y="57" text-anchor="middle">1</text></g>
+          <g class="tag"><rect x="92" y="48" width="18" height="16" rx="4"/><text x="101" y="60" text-anchor="middle">2</text></g>
+          <g class="tag"><rect x="144" y="48" width="18" height="16" rx="4"/><text x="153" y="60" text-anchor="middle">3</text></g>
+          <g class="tag"><rect x="194" y="48" width="18" height="16" rx="4" style="fill:var(--yellow)"/><text x="203" y="60" text-anchor="middle">4</text></g>
+          <g class="tag"><rect x="256" y="45" width="18" height="16" rx="4"/><text x="265" y="57" text-anchor="middle">5</text></g>
+          <g class="tag"><rect x="382" y="45" width="18" height="16" rx="4"/><text x="391" y="57" text-anchor="middle">6</text></g>
+          <g class="tag"><rect x="18" y="157" width="18" height="16" rx="4"/><text x="27" y="169" text-anchor="middle">7</text></g>
+          <g class="tag"><rect x="238" y="157" width="18" height="16" rx="4"/><text x="247" y="169" text-anchor="middle">8</text></g>
+        </g>
+
+        <!-- the AI's reply -->
+        <circle cx="34" cy="326" r="20" style="fill:var(--yellow-tint)" class="stroke-yellow" stroke-width="1.4"/>
+        <text x="34" y="331" class="c-yellow s13 b" text-anchor="middle">AI</text>
+        <path d="M58 326 L66 320 L66 332 Z" style="fill:var(--yellow)"/>
+        <rect x="66" y="304" width="402" height="44" rx="12" style="fill:var(--surface-2)" class="stroke-yellow" stroke-width="1.2"/>
+        <text x="84" y="331" class="fg s15 it said-plain">“Click the round button near the top?”</text>
+        <text x="84" y="331" class="c-yellow s16 mono said-marked">click 4</text>
+      </svg>
+      <figcaption id="marksCap">Without numbers, the AI can only describe what it wants. Three things on this page could be “the round button near the top”.</figcaption>
+    </figure>
+    <pre class="term" id="marksList" hidden aria-label="What the AI is given as text">[1] link      "Home"
+[2] link      "About"
+[3] link      "News"
+<span class="ans">[4] link      "Taxes"</span>
+[5] searchbox "Search"
+[6] button    "Go"
+[7] link      "Individual Income Tax"
+[8] link      "Tax residency &amp; rates"</pre>
+    <div class="controls">
+      <button class="btn primary" type="button" id="marksBtn" aria-pressed="false" aria-controls="marksFig">Add the numbers</button>
+    </div>
+  </div>
+
+  <p>One promise holds this together: the 4 painted on the picture must be the 4 in the list. If those ever disagreed, every click would be a coin toss, and the logs would blame the AI's reasoning. The code keeps them in step by working out where every number goes as plain arithmetic on rectangles first, and painting the picture only after.</p>
+
+  <div class="sub">
+    <h3>The page can lie</h3>
+    <p>Building that list sounds easy. The trouble is that a web page will happily report things a person can't actually click. Picture a page with a cookie dialog. Underneath it, every link still has a real position and a real size. Code that only reads the page would offer all of them, and the AI would click one after another, puzzled that nothing happens.</p>
+    <p>So the agent asks the browser four questions about every candidate. Can a person operate it? Is it switched on? Is any of it on screen? And would a click aimed at it actually land on it? The last one is answered by asking the browser what sits at five points inside the element. If something else is on top at those points, the element is covered.</p>
+    <figure>
+      <svg viewBox="0 0 480 232" role="img" aria-labelledby="lieT">
+        <title id="lieT">Six links sit behind a dimmed backdrop and a cookie dialog. Probe points on each link land on the backdrop, so only the dialog's two buttons are handed to the AI.</title>
+        <rect x="12" y="12" width="252" height="206" rx="10" class="frame"/>
+        <!-- links behind -->
+        <g>
+          <rect x="28" y="30" width="100" height="18" rx="4" style="fill:var(--surface-2)" class="stroke-line"/>
+          <rect x="148" y="30" width="100" height="18" rx="4" style="fill:var(--surface-2)" class="stroke-line"/>
+          <rect x="28" y="60" width="100" height="18" rx="4" style="fill:var(--surface-2)" class="stroke-line"/>
+          <rect x="148" y="60" width="100" height="18" rx="4" style="fill:var(--surface-2)" class="stroke-line"/>
+          <rect x="28" y="90" width="100" height="18" rx="4" style="fill:var(--surface-2)" class="stroke-line"/>
+          <rect x="148" y="90" width="100" height="18" rx="4" style="fill:var(--surface-2)" class="stroke-line"/>
+        </g>
+        <rect x="12.6" y="12.6" width="250.8" height="204.8" rx="9.5" style="fill:var(--scrim)"/>
+        <!-- probes -->
+        <g style="fill:var(--red)">
+          <circle cx="78" cy="39" r="2.8"/><circle cx="40" cy="34.5" r="2.8"/><circle cx="116" cy="34.5" r="2.8"/><circle cx="40" cy="43.5" r="2.8"/><circle cx="116" cy="43.5" r="2.8"/>
+          <circle cx="198" cy="39" r="2.8"/><circle cx="160" cy="34.5" r="2.8"/><circle cx="236" cy="34.5" r="2.8"/><circle cx="160" cy="43.5" r="2.8"/><circle cx="236" cy="43.5" r="2.8"/>
+          <circle cx="78" cy="69" r="2.8"/><circle cx="40" cy="64.5" r="2.8"/><circle cx="116" cy="64.5" r="2.8"/><circle cx="40" cy="73.5" r="2.8"/><circle cx="116" cy="73.5" r="2.8"/>
+          <circle cx="198" cy="69" r="2.8"/><circle cx="160" cy="64.5" r="2.8"/><circle cx="236" cy="64.5" r="2.8"/><circle cx="160" cy="73.5" r="2.8"/><circle cx="236" cy="73.5" r="2.8"/>
+          <circle cx="78" cy="99" r="2.8"/><circle cx="40" cy="94.5" r="2.8"/><circle cx="116" cy="94.5" r="2.8"/><circle cx="40" cy="103.5" r="2.8"/><circle cx="116" cy="103.5" r="2.8"/>
+          <circle cx="198" cy="99" r="2.8"/><circle cx="160" cy="94.5" r="2.8"/><circle cx="236" cy="94.5" r="2.8"/><circle cx="160" cy="103.5" r="2.8"/><circle cx="236" cy="103.5" r="2.8"/>
+        </g>
+        <!-- dialog -->
+        <rect x="46" y="122" width="184" height="82" rx="9" style="fill:var(--surface)" class="stroke-line"/>
+        <text x="60" y="146" class="ink s14">We use cookies</text>
+        <rect x="60" y="162" width="70" height="28" rx="6" style="fill:var(--surface-2)" class="stroke-blue" stroke-width="1.4"/>
+        <text x="95" y="181" class="fg s13" text-anchor="middle">Accept</text>
+        <rect x="142" y="162" width="70" height="28" rx="6" style="fill:var(--surface-2)" class="stroke-blue" stroke-width="1.4"/>
+        <text x="177" y="181" class="fg s13" text-anchor="middle">Reject</text>
+        <g class="tag"><rect x="53" y="154" width="18" height="16" rx="4"/><text x="62" y="166" text-anchor="middle">1</text></g>
+        <g class="tag"><rect x="135" y="154" width="18" height="16" rx="4"/><text x="144" y="166" text-anchor="middle">2</text></g>
+        <!-- right panel -->
+        <text x="284" y="38" class="s14">Laid out on the page: <tspan class="ink b">8</tspan></text>
+        <text x="284" y="62" class="s14 c-red">Covered by the shade: 6</text>
+        <text x="284" y="104" class="ink s14">Handed to the AI:</text>
+        <text x="284" y="130" class="c-blue s13 mono">[1] button "Accept"</text>
+        <text x="284" y="152" class="c-blue s13 mono">[2] button "Reject"</text>
+        <circle cx="289" cy="196" r="3" style="fill:var(--red)"/>
+        <text x="299" y="200" class="s12">a probe that hit the shade</text>
+      </svg>
+      <figcaption>On the project's practice page, eight elements are laid out and measurable. Six of them sit behind the dialog's shade, so every probe lands on the shade. The AI is handed a list of two.</figcaption>
+    </figure>
+    <p>The AI gets the numbered list and the page's main text on every step. The screenshot with numbers drawn on it is sent only when the text looks too thin: fewer than five clickable things found, or two failures in a row. Pictures go to a slower, pricier model that can see, and most steps don't need one.</p>
+  </div>
+</section>
+
+<!-- ============ 3 ============ -->
+<section id="loop">
+  <div class="part"><span class="eyebrow">Part 3</span><h2>The loop, one step at a time</h2></div>
+  <p>With a way to see and a way to point, the agent works like a patient person. Each step goes round the same loop: <strong>look</strong> at the page, let the AI <strong>decide</strong> one action, <strong>check</strong> that action, and <strong>act</strong> on it in a real browser. The run ends when the AI chooses to finish, or after 25 steps at most.</p>
+  <p>Press <em>Next step</em> to follow the real demo run on the IRAS website, one stage at a time.</p>
+
+  <div class="panel">
+    <figure style="margin:0">
+      <svg viewBox="0 0 480 312" role="img" aria-labelledby="loopT" id="loopSvg">
+        <title id="loopT">The agent's loop: Look, Decide, Check, Act, back to Look. A rejected action goes from Check back to Decide. Finishing leads out to Mark.</title>
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--soft)"/></marker>
+          <marker id="ahRed" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--red)"/></marker>
+          <marker id="ahGreen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--green)"/></marker>
+          <marker id="ahBrown" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--brown)"/></marker>
+        </defs>
+        <!-- arcs: centre (200,160), r 105 -->
+        <path d="M249.3 67.3 A105 105 0 0 1 297.4 120.7" class="arrow stroke-soft" marker-end="url(#ah)"/>
+        <path d="M297.4 199.3 A105 105 0 0 1 249.3 252.7" class="arrow stroke-soft" marker-end="url(#ah)"/>
+        <path d="M150.7 252.7 A105 105 0 0 1 102.6 199.3" class="arrow stroke-soft" marker-end="url(#ah)"/>
+        <path d="M102.6 120.7 A105 105 0 0 1 150.7 67.3" class="arrow stroke-soft" marker-end="url(#ah)"/>
+        <!-- retry -->
+        <path d="M228 250 Q 262 218 276 184" class="arrow stroke-red" marker-end="url(#ahRed)"/>
+        <text x="200" y="208" class="c-red s12" text-anchor="middle">no? say why,</text>
+        <text x="200" y="224" class="c-red s12" text-anchor="middle">ask again</text>
+        <text x="200" y="148" class="faint s12 it" text-anchor="middle">repeat, up to</text>
+        <text x="200" y="164" class="faint s12 it" text-anchor="middle">25 steps</text>
+        <!-- start -->
+        <text x="16" y="44" class="s13">task +</text>
+        <text x="16" y="60" class="s13">start page</text>
+        <path d="M88 55 L150 55" class="arrow stroke-soft" marker-end="url(#ah)"/>
+        <!-- finish -->
+        <path d="M352 160 L396 160" class="arrow stroke-green" marker-end="url(#ahGreen)"/>
+        <text x="374" y="150" class="c-green s12" text-anchor="middle">finish</text>
+        <!-- nodes -->
+        <g class="node look" data-node="look"><rect x="154" y="35" width="92" height="40" rx="10"/><text x="200" y="60" text-anchor="middle">Look</text></g>
+        <g class="node decide" data-node="decide"><rect x="259" y="140" width="92" height="40" rx="10"/><text x="305" y="165" text-anchor="middle">Decide</text></g>
+        <g class="node check" data-node="check"><rect x="154" y="245" width="92" height="40" rx="10"/><text x="200" y="270" text-anchor="middle">Check</text></g>
+        <g class="node act" data-node="act"><rect x="49" y="140" width="92" height="40" rx="10"/><text x="95" y="165" text-anchor="middle">Act</text></g>
+        <g class="node mark" data-node="mark"><rect x="398" y="140" width="70" height="40" rx="10"/><text x="433" y="165" text-anchor="middle">Mark</text></g>
+      </svg>
+    </figure>
+    <div class="readout" aria-live="polite">
+      <span class="label" id="loopLabel">Ready</span>
+      <p id="loopText">The agent opens a fresh, private browser on the IRAS home page. It has the question and nothing else.</p>
+    </div>
+    <pre class="term" id="loopTerm" aria-label="The run's output so far"><span class="muted">$ waa run --start-url https://www.iras.gov.sg/ "…"</span></pre>
+    <div class="controls">
+      <button class="btn" type="button" id="loopBack" disabled>← Back</button>
+      <button class="btn primary" type="button" id="loopNext">Next step →</button>
+      <button class="btn" type="button" id="loopReset">Start over</button>
+    </div>
+  </div>
+
+  <div class="sub">
+    <h3>Decide: seven moves, nothing else</h3>
+    <p>The AI can't reply with any sentence it likes. Its answer must be exactly one of seven actions, in a fixed format that the AI service enforces while the reply is being written:</p>
+    <ul class="chips" aria-label="The seven actions">
+      <li>click</li><li>fill</li><li>press</li><li>scroll</li><li>go to</li><li class="skill">use a skill</li><li>finish</li>
+    </ul>
+    <p>There is no eighth action, so the AI has no way to run code or do anything nobody planned for. There is also no loose sentence for the program to misread.</p>
+    <p>An AI also has no memory between calls. Each step, the agent writes a fresh note of what has happened so far. The last five steps go in word for word. Older steps are folded into a short tally, and the tally is made by <em>counting</em>, not by asking another AI to summarise. A price like “$12.99” can never drift into “about $13”. Thirty steps of memory take 1,717 characters; three thousand steps take 1,741.</p>
+    <figure>
+      <svg viewBox="0 0 480 152" role="img" aria-labelledby="memT">
+        <title id="memT">Memory at step 12: older steps folded into a counted tally, the last five steps kept in full.</title>
+        <text x="12" y="16" class="faint s12">What the AI is reminded of, at step 12 (example)</text>
+        <rect x="12" y="30" width="150" height="96" rx="8" style="fill:var(--surface)" class="stroke-line dash" stroke-width="1.2"/>
+        <text x="24" y="52" class="ink s13">Steps 1–6, counted</text>
+        <text x="24" y="74" class="s12">4 clicks, 2 fills</text>
+        <text x="24" y="92" class="s12">typed “Hollow Lane”</text>
+        <text x="24" y="110" class="s12">visited 3 pages</text>
+        <g>
+          <rect x="176" y="30" width="52" height="96" rx="7" style="fill:var(--blue-tint)" class="stroke-blue" stroke-width="1.1"/>
+          <rect x="236" y="30" width="52" height="96" rx="7" style="fill:var(--blue-tint)" class="stroke-blue" stroke-width="1.1"/>
+          <rect x="296" y="30" width="52" height="96" rx="7" style="fill:var(--blue-tint)" class="stroke-blue" stroke-width="1.1"/>
+          <rect x="356" y="30" width="52" height="96" rx="7" style="fill:var(--blue-tint)" class="stroke-blue" stroke-width="1.1"/>
+          <rect x="416" y="30" width="52" height="96" rx="7" style="fill:var(--blue-tint)" class="stroke-blue" stroke-width="1.1"/>
+          <text x="202" y="50" class="ink s12" text-anchor="middle">7</text><text x="262" y="50" class="ink s12" text-anchor="middle">8</text>
+          <text x="322" y="50" class="ink s12" text-anchor="middle">9</text><text x="382" y="50" class="ink s12" text-anchor="middle">10</text>
+          <text x="442" y="50" class="ink s12" text-anchor="middle">11</text>
+        </g>
+        <g style="fill:var(--line-strong)">
+          <rect x="184" y="62" width="36" height="5" rx="2.5"/><rect x="184" y="74" width="30" height="5" rx="2.5"/><rect x="184" y="86" width="36" height="5" rx="2.5"/><rect x="184" y="98" width="24" height="5" rx="2.5"/>
+          <rect x="244" y="62" width="36" height="5" rx="2.5"/><rect x="244" y="74" width="28" height="5" rx="2.5"/><rect x="244" y="86" width="36" height="5" rx="2.5"/><rect x="244" y="98" width="30" height="5" rx="2.5"/>
+          <rect x="304" y="62" width="36" height="5" rx="2.5"/><rect x="304" y="74" width="32" height="5" rx="2.5"/><rect x="304" y="86" width="26" height="5" rx="2.5"/><rect x="304" y="98" width="36" height="5" rx="2.5"/>
+          <rect x="364" y="62" width="36" height="5" rx="2.5"/><rect x="364" y="74" width="30" height="5" rx="2.5"/><rect x="364" y="86" width="36" height="5" rx="2.5"/><rect x="364" y="98" width="22" height="5" rx="2.5"/>
+          <rect x="424" y="62" width="36" height="5" rx="2.5"/><rect x="424" y="74" width="34" height="5" rx="2.5"/><rect x="424" y="86" width="28" height="5" rx="2.5"/><rect x="424" y="98" width="36" height="5" rx="2.5"/>
+        </g>
+        <text x="87" y="146" class="s12" text-anchor="middle">older steps, counted</text>
+        <text x="322" y="146" class="s12" text-anchor="middle">last five steps, word for word</text>
+      </svg>
+      <figcaption>The tally stays small however long the run gets, so the page the agent is looking at now is never buried under pages it already left.</figcaption>
+    </figure>
+  </div>
+
+  <div class="sub">
+    <h3>Check: a gate in front of the browser</h3>
+    <p>A well-formed action can still be a bad one. <code>click 12</code> is perfectly formatted on a page with eight numbered things. So every action passes a gate before the browser sees it. Is it one of the seven actions? Does the element exist on the page <em>exactly as the AI saw it</em>? Is the address one this run is allowed to visit?</p>
+    <p>The important part is what happens on a <em>no</em>. Nothing crashes. The AI gets back a plain sentence saying what was wrong and is asked again, up to two more times. A specific sentence, naming the number that doesn't exist and the numbers that do, usually fixes the next try. Try a few proposals on the page from Part 2:</p>
+    <div class="panel">
+      <figure style="margin:0">
+        <svg viewBox="0 0 480 168" role="img" aria-labelledby="gateT" id="gateSvg" class="state-pass">
+          <title id="gateT">The AI's proposal goes to the gate. Accepted proposals continue to the browser; rejected ones go back to the AI with a reason.</title>
+          <circle cx="40" cy="70" r="26" style="fill:var(--yellow-tint)" class="stroke-yellow" stroke-width="1.4"/>
+          <text x="40" y="75" class="c-yellow s14 b" text-anchor="middle">AI</text>
+          <rect x="78" y="52" width="140" height="36" rx="18" style="fill:var(--surface-2)" class="stroke-yellow" stroke-width="1.3"/>
+          <text x="148" y="75" class="ink s13 mono" text-anchor="middle" id="gateProposal">click 4</text>
+          <path d="M219 70 L236 70" class="arrow stroke-soft" marker-end="url(#ah)"/>
+          <rect x="240" y="38" width="64" height="64" rx="10" style="fill:var(--surface-2)" class="stroke-soft" stroke-width="1.4"/>
+          <text x="272" y="75" class="ink s14" text-anchor="middle" style="font-family:var(--font-display)">Check</text>
+          <g class="pass-path">
+            <path d="M306 70 L374 70" class="arrow stroke-green" stroke-width="2.2" marker-end="url(#ahGreen)"/>
+            <text x="340" y="60" class="c-green s12" text-anchor="middle">allowed</text>
+          </g>
+          <rect x="378" y="44" width="90" height="52" rx="10" style="fill:var(--blue-tint)" class="stroke-blue" stroke-width="1.3"/>
+          <text x="423" y="75" class="ink s14" text-anchor="middle">Browser</text>
+          <g class="fail-path">
+            <path d="M262 104 Q 170 166 52 100" class="arrow stroke-red" stroke-width="2.2" marker-end="url(#ahRed)"/>
+            <text x="300" y="140" class="c-red s12 mono" id="gateCode">unknown_element</text>
+          </g>
+        </svg>
+      </figure>
+      <div class="verdict" aria-live="polite">
+        <span class="code ok" id="gateVerdict">allowed</span>
+        <p id="gateMsg">Element 4 is the link “Taxes” on this page, and the click keeps the run on iras.gov.sg. The browser does it.</p>
+      </div>
+      <div class="controls" role="group" aria-label="Proposals to try">
+        <button class="btn mono-btn" type="button" data-gate="ok" aria-pressed="true">click 4</button>
+        <button class="btn mono-btn" type="button" data-gate="missing" aria-pressed="false">click 12</button>
+        <button class="btn mono-btn" type="button" data-gate="offsite" aria-pressed="false">go to example.com</button>
+      </div>
+    </div>
+    <p>If three proposals in a row are refused, the run stops with a stated reason instead of quietly doing nothing. The agent is also a polite visitor: it waits at least a second between visits to a site, names itself honestly in every request instead of pretending to be a person's browser, and obeys the site's <code>robots.txt</code>, the file where a site lists what automated visitors should leave alone.</p>
+  </div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section id="marked">
+  <div class="part"><span class="eyebrow">Part 4</span><h2>Marked, not trusted</h2></div>
+  <p>When the agent stops, it says “success” and gives an answer. On its own, that claim counts for nothing. Every task in the project's benchmark comes with checks that a <em>program</em> runs on the finished run. Is the answer right, written any of the usual ways? Did the run end on the right page?</p>
+  <figure>
+    <svg viewBox="0 0 480 214" role="img" aria-labelledby="markT">
+      <title id="markT">Two runs of the tax task. Run A answers 3350: both checks pass. Run B answers 4600: the answer check fails, so the run fails even though the agent claimed success.</title>
+      <!-- Run A -->
+      <rect x="12" y="12" width="222" height="190" rx="12" class="frame"/>
+      <text x="28" y="38" class="faint s12">Run A · Nemotron 3 Nano</text>
+      <text x="28" y="62" class="s13">says: <tspan class="c-yellow mono">success, 3350</tspan></text>
+      <line x1="28" y1="78" x2="218" y2="78" class="stroke-line"/>
+      <path d="M30 100 l5 5 l9 -11" class="arrow stroke-green" stroke-width="2.4"/>
+      <text x="52" y="105" class="fg s13">answer is $3,350</text>
+      <path d="M30 130 l5 5 l9 -11" class="arrow stroke-green" stroke-width="2.4"/>
+      <text x="52" y="135" class="fg s13">ends on the rates page</text>
+      <rect x="28" y="156" width="66" height="28" rx="14" style="fill:var(--green-tint)" class="stroke-green" stroke-width="1.3"/>
+      <text x="61" y="175" class="c-green s13 b" text-anchor="middle">PASS</text>
+      <!-- Run B -->
+      <rect x="246" y="12" width="222" height="190" rx="12" class="frame"/>
+      <text x="262" y="38" class="faint s12">Run B · another model</text>
+      <text x="262" y="62" class="s13">says: <tspan class="c-yellow mono">success, 4600</tspan></text>
+      <line x1="262" y1="78" x2="452" y2="78" class="stroke-line"/>
+      <path d="M265 94 l11 11 M276 94 l-11 11" class="arrow stroke-red" stroke-width="2.4"/>
+      <text x="286" y="105" class="fg s13">answer is $3,350</text>
+      <path d="M264 130 l5 5 l9 -11" class="arrow stroke-green" stroke-width="2.4"/>
+      <text x="286" y="135" class="fg s13">ends on the rates page</text>
+      <rect x="262" y="156" width="66" height="28" rx="14" style="fill:var(--red-tint)" class="stroke-red" stroke-width="1.3"/>
+      <text x="295" y="175" class="c-red s13 b" text-anchor="middle">FAIL</text>
+    </svg>
+    <figcaption>Two runs of the same task. Run B found the right table, read the row below, answered $4,600, and still reported success. The answer check caught it.</figcaption>
+  </figure>
+  <p>Why check the page as well as the answer? In one task, on the Ministry of Education's school finder, the agent named the correct school without ever applying the filters the task asked for. It had answered from what the AI already knew. The page check failed it. An agent that guesses well on easy questions will guess wrong on the ones that matter, so the tasks check <em>how</em> it got there.</p>
+
+  <div class="sub">
+    <h3>Who checks the checker?</h3>
+    <p>Some answers can't be checked by code. The latest population figure, for example, changes every year. Those go to a second AI acting as a <strong>judge</strong>, from a different company than the agent's model; the program refuses to start if the two match. The judge also names the cause of every failure.</p>
+    <p>Then a person checked the machine's marks by hand on 20 runs, seeing the evidence first and the machine's verdict last.</p>
+    <figure>
+      <svg viewBox="0 0 480 112" role="img" aria-labelledby="agreeT">
+        <title id="agreeT">Agreement between person and machine: 20 of 20 on pass or fail, 10 of 11 on the cause of failure.</title>
+        <text x="12" y="30" class="ink s14">Pass or fail</text>
+        <text x="12" y="47" class="s12">20 of 20 agreed</text>
+        <g style="fill:var(--green)">
+          <circle cx="140" cy="34" r="6"/><circle cx="156" cy="34" r="6"/><circle cx="172" cy="34" r="6"/><circle cx="188" cy="34" r="6"/><circle cx="204" cy="34" r="6"/>
+          <circle cx="220" cy="34" r="6"/><circle cx="236" cy="34" r="6"/><circle cx="252" cy="34" r="6"/><circle cx="268" cy="34" r="6"/><circle cx="284" cy="34" r="6"/>
+          <circle cx="300" cy="34" r="6"/><circle cx="316" cy="34" r="6"/><circle cx="332" cy="34" r="6"/><circle cx="348" cy="34" r="6"/><circle cx="364" cy="34" r="6"/>
+          <circle cx="380" cy="34" r="6"/><circle cx="396" cy="34" r="6"/><circle cx="412" cy="34" r="6"/><circle cx="428" cy="34" r="6"/><circle cx="444" cy="34" r="6"/>
+        </g>
+        <text x="12" y="80" class="ink s14">Why it failed</text>
+        <text x="12" y="97" class="s12">10 of 11 agreed</text>
+        <g style="fill:var(--green)">
+          <circle cx="140" cy="84" r="6"/><circle cx="156" cy="84" r="6"/><circle cx="172" cy="84" r="6"/><circle cx="188" cy="84" r="6"/><circle cx="204" cy="84" r="6"/>
+          <circle cx="220" cy="84" r="6"/><circle cx="236" cy="84" r="6"/><circle cx="252" cy="84" r="6"/><circle cx="268" cy="84" r="6"/><circle cx="284" cy="84" r="6"/>
+        </g>
+        <circle cx="300" cy="84" r="5.2" fill="none" class="stroke-red" stroke-width="1.8"/>
+        <text x="314" y="88" class="c-red s12">one disagreement</text>
+      </svg>
+      <figcaption>Each dot is one run checked by a person. The disagreement was a run stuck behind a pop-up (Part 7): the judge called it navigation, the person called it planning. Twenty is a small sample. It suggests a wrong pass-or-fail mark is rarer than about 1 in 7, not that marks are never wrong.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============ 5 ============ -->
+<section id="skills">
+  <div class="part"><span class="eyebrow">Part 5</span><h2>Learning shortcuts</h2></div>
+  <p>Every step of working something out costs an AI call, and AI calls are most of the money and most of the waiting. But questions repeat. Once the agent has found its way to the tax rates page, why work the route out again?</p>
+  <p>So a run that passed can be turned into a <strong>skill</strong>: the same route, saved as a small recipe with blanks where the task's details were. The next time a task starts on the same site, the AI is offered the skill. Choosing it costs one AI call, and the browser then replays every saved step on its own, with no AI involved at all.</p>
+  <figure>
+    <svg viewBox="0 0 480 194" role="img" aria-labelledby="skillT">
+      <title id="skillT">Working out the tax route takes five AI calls. Replaying the learned skill takes two: one to choose the skill and one to finish.</title>
+      <defs><g id="coin"><circle r="8" style="fill:var(--yellow)"/><circle r="4" fill="none" style="stroke:var(--bg)" stroke-width="1.4"/></g></defs>
+      <text x="12" y="22" class="ink s14">Working it out <tspan class="c-yellow">· 5 AI calls</tspan></text>
+      <use href="#coin" x="376" y="18"/><text x="390" y="22" class="s12">one AI call</text>
+      <g>
+        <rect x="12" y="40" width="84" height="40" rx="8" style="fill:var(--surface)" class="stroke-line"/><text x="54" y="65" class="fg s12" text-anchor="middle">Taxes</text><use href="#coin" x="92" y="40"/>
+        <rect x="103" y="40" width="84" height="40" rx="8" style="fill:var(--surface)" class="stroke-line"/><text x="145" y="65" class="fg s12" text-anchor="middle">Income Tax</text><use href="#coin" x="183" y="40"/>
+        <rect x="194" y="40" width="84" height="40" rx="8" style="fill:var(--surface)" class="stroke-line"/><text x="236" y="65" class="fg s12" text-anchor="middle">Residency</text><use href="#coin" x="274" y="40"/>
+        <rect x="285" y="40" width="84" height="40" rx="8" style="fill:var(--surface)" class="stroke-line"/><text x="327" y="65" class="fg s12" text-anchor="middle">Rates card</text><use href="#coin" x="365" y="40"/>
+        <rect x="376" y="40" width="84" height="40" rx="8" style="fill:var(--surface)" class="stroke-line"/><text x="418" y="65" class="fg s12" text-anchor="middle">Finish</text><use href="#coin" x="456" y="40"/>
+      </g>
+      <text x="12" y="124" class="ink s14">Replaying the skill <tspan class="c-yellow">· 2 AI calls</tspan></text>
+      <rect x="12" y="140" width="357" height="44" rx="9" style="fill:var(--brown-tint)" class="stroke-brown" stroke-width="1.3"/>
+      <rect x="20" y="148" width="80" height="28" rx="6" style="fill:var(--surface)" class="stroke-line"/><text x="60" y="166" class="fg s12" text-anchor="middle">Taxes</text>
+      <rect x="107" y="148" width="80" height="28" rx="6" style="fill:var(--surface)" class="stroke-line"/><text x="147" y="166" class="fg s12" text-anchor="middle">Income Tax</text>
+      <rect x="194" y="148" width="80" height="28" rx="6" style="fill:var(--surface)" class="stroke-line"/><text x="234" y="166" class="fg s12" text-anchor="middle">Residency</text>
+      <rect x="281" y="148" width="80" height="28" rx="6" style="fill:var(--surface)" class="stroke-line"/><text x="321" y="166" class="fg s12" text-anchor="middle">Rates card</text>
+      <use href="#coin" x="365" y="140"/>
+      <rect x="376" y="140" width="84" height="44" rx="8" style="fill:var(--surface)" class="stroke-line"/><text x="418" y="167" class="fg s12" text-anchor="middle">Finish</text><use href="#coin" x="456" y="140"/>
+    </svg>
+    <figcaption>The four clicks inside the brown box are replayed by the browser for free. The saving grows with the route: a ten-step routine still costs one call to choose it.</figcaption>
+  </figure>
+
+  <div class="sub">
+    <h3>Saving a click so it still works next month</h3>
+    <p>There is a catch. The numbers on the page are thrown away and redrawn on every single look, so a recipe that says <code>click 4</code> is like a shopping list that says “the third thing on the left”. It breaks as soon as anything moves. So the skill saves <em>descriptions</em> of each element, three of them, tried in order:</p>
+    <figure>
+      <svg viewBox="0 0 480 198" role="img" aria-labelledby="ladderT">
+        <title id="ladderT">Three ways to find an element, tried in order: by its accessible name, by its kind and visible text, and as a last resort by its position.</title>
+        <line x1="26" y1="40" x2="26" y2="160" class="stroke-line" stroke-width="2"/>
+        <g>
+          <rect x="52" y="12" width="416" height="54" rx="10" style="fill:var(--surface)" class="stroke-green" stroke-width="1.3"/>
+          <circle cx="26" cy="39" r="13" style="fill:var(--bg)" class="stroke-green" stroke-width="1.6"/><text x="26" y="44" class="c-green s13 b" text-anchor="middle">1</text>
+          <text x="68" y="35" class="ink s15">What it's called</text>
+          <text x="68" y="55" class="s12 mono">name = "Taxes"</text>
+          <text x="454" y="35" class="c-green s12" text-anchor="end">most durable</text>
+        </g>
+        <g>
+          <rect x="52" y="74" width="416" height="54" rx="10" style="fill:var(--surface)" class="stroke-line" stroke-width="1.3"/>
+          <circle cx="26" cy="101" r="13" style="fill:var(--bg)" class="stroke-soft" stroke-width="1.6"/><text x="26" y="106" class="fg s13 b" text-anchor="middle">2</text>
+          <text x="68" y="97" class="ink s15">What it is, and what it says</text>
+          <text x="68" y="117" class="s12">a link whose visible text is “Taxes”</text>
+        </g>
+        <g>
+          <rect x="52" y="136" width="416" height="54" rx="10" style="fill:var(--surface)" class="stroke-red dash" stroke-width="1.3"/>
+          <circle cx="26" cy="163" r="13" style="fill:var(--bg)" class="stroke-red" stroke-width="1.6"/><text x="26" y="168" class="c-red s13 b" text-anchor="middle">3</text>
+          <text x="68" y="159" class="ink s15">Where it sits</text>
+          <text x="68" y="179" class="s12 mono">link[3]: the third link</text>
+          <text x="454" y="159" class="c-red s12" text-anchor="end">last resort</text>
+        </g>
+      </svg>
+      <figcaption>The first description is the label a screen reader announces to blind users. Sites rarely rename it, because changing it breaks the site for those users. Each rung must match <em>exactly one</em> element; if a description matches two things, the agent moves down a rung instead of picking one.</figcaption>
+    </figure>
+    <p>A recipe learned from one run has only proved that it can repeat itself. So before a skill is kept, it is replayed on the live site with <em>different</em> values, and it has to work. Only then does it go into the skill library. Each skill is a small text file a person can open, read, disagree with, and delete.</p>
+  </div>
+</section>
+
+<!-- ============ 6 ============ -->
+<section id="results">
+  <div class="part"><span class="eyebrow">Part 6</span><h2>Did it work?</h2></div>
+  <p>The project's benchmark is <strong>12 read-only questions on 5 Singapore government websites</strong>: the Ministry of Manpower, the Ministry of Education, IRAS, the statistics office SingStat, and the CPF Board, which runs the national savings scheme. Every question was run on the live sites in October 2026, two or three times each. The AI behind the agent is NVIDIA's open Nemotron 3 Nano model unless stated otherwise.</p>
+
+  <div class="sub">
+    <h3>Do learned skills help? Yes.</h3>
+    <p>The benchmark ran twice on the same model: <em>cold</em>, with no skills, then <em>warm</em>, with the three skills learned from the cold run's passes.</p>
+    <figure>
+      <svg viewBox="0 0 480 240" role="img" aria-labelledby="cwT">
+        <title id="cwT">Success rate, cold versus warm. All 12 questions: 33% to 53%. The 3 questions with a skill: 6 of 9 to 9 of 9. The 9 questions without a skill: 6 of 27 to 10 of 27.</title>
+        <rect x="170" y="6" width="12" height="12" rx="3" style="fill:var(--faint)"/><text x="188" y="17" class="s12">Cold: no skills</text>
+        <rect x="296" y="6" width="12" height="12" rx="3" style="fill:var(--blue)"/><text x="314" y="17" class="s12">Warm: 3 learned skills</text>
+        <!-- grid: x 170..420 = 0..100% -->
+        <line x1="295" y1="38" x2="295" y2="218" class="stroke-line dash" stroke-width="1"/>
+        <line x1="420" y1="38" x2="420" y2="218" class="stroke-line dash" stroke-width="1"/>
+        <line x1="170" y1="38" x2="170" y2="218" class="stroke-soft" stroke-width="1.2"/>
+        <text x="170" y="234" class="faint s12" text-anchor="middle">0</text>
+        <text x="295" y="234" class="faint s12" text-anchor="middle">50%</text>
+        <text x="420" y="234" class="faint s12" text-anchor="middle">100%</text>
+        <!-- group 1 -->
+        <text x="12" y="60" class="ink s14">All 12 questions</text><text x="12" y="78" class="faint s12">36 trials each</text>
+        <rect x="170" y="46" width="83.3" height="16" rx="3" style="fill:var(--faint)"><title>Cold: 12 of 36 (33.3%)</title></rect>
+        <rect x="170" y="66" width="132" height="16" rx="3" style="fill:var(--blue)"><title>Warm: 19 of 36 (52.8%)</title></rect>
+        <text x="259" y="59" class="s12">33%</text><text x="308" y="79" class="ink s12 b">53%</text>
+        <!-- group 2 -->
+        <text x="12" y="120" class="ink s14">3 with a skill</text><text x="12" y="138" class="faint s12">9 trials each</text>
+        <rect x="170" y="106" width="166.8" height="16" rx="3" style="fill:var(--faint)"><title>Cold: 6 of 9</title></rect>
+        <rect x="170" y="126" width="250" height="16" rx="3" style="fill:var(--blue)"><title>Warm: 9 of 9</title></rect>
+        <text x="343" y="119" class="s12">6 of 9</text><text x="426" y="139" class="ink s12 b">9 of 9</text>
+        <!-- group 3 -->
+        <text x="12" y="180" class="ink s14">9 without a skill</text><text x="12" y="198" class="faint s12">27 trials each</text>
+        <rect x="170" y="166" width="55.5" height="16" rx="3" style="fill:var(--faint)"><title>Cold: 6 of 27</title></rect>
+        <rect x="170" y="186" width="92.5" height="16" rx="3" style="fill:var(--blue)"><title>Warm: 10 of 27</title></rect>
+        <text x="232" y="179" class="s12">6 of 27</text><text x="269" y="199" class="ink s12 b">10 of 27</text>
+      </svg>
+      <figcaption>Where a skill applied, every trial passed, in 2.0 steps on average instead of 11.1: 82% fewer. Average cost per trial fell from $0.0042 to $0.0030.</figcaption>
+    </figure>
+    <p>Read the split, not the headline. The nine questions with no skill ran exactly as before, yet still rose from 6 to 10 passes. That rise is chance, and it shows how much a small benchmark wobbles from one run to the next. The clean result is the middle pair.</p>
+  </div>
+
+  <div class="sub">
+    <h3>Is it tied to one AI model? No.</h3>
+    <p>The same benchmark, cold, on three similar-sized open models from three makers, changing nothing but one setting:</p>
+    <figure>
+      <svg viewBox="0 0 480 160" role="img" aria-labelledby="modelsT">
+        <title id="modelsT">Pass rate over 24 trials: Nemotron 3 Nano 41.7%, Qwen 3.6 33.3%, Muse Glimmer 33.3%.</title>
+        <line x1="295" y1="10" x2="295" y2="136" class="stroke-line dash" stroke-width="1"/>
+        <line x1="420" y1="10" x2="420" y2="136" class="stroke-line dash" stroke-width="1"/>
+        <line x1="170" y1="10" x2="170" y2="136" class="stroke-soft" stroke-width="1.2"/>
+        <text x="12" y="28" class="ink s14">Nemotron 3 Nano</text><text x="12" y="44" class="faint s12">NVIDIA</text>
+        <rect x="170" y="18" width="104.3" height="22" rx="3" style="fill:var(--blue)"><title>10 of 24 (41.7%), $0.0042 per trial, 78 s</title></rect>
+        <text x="280" y="34" class="ink s12 b">10 of 24 · $0.0042</text>
+        <text x="12" y="70" class="ink s14">Qwen 3.6</text><text x="12" y="86" class="faint s12">Alibaba</text>
+        <rect x="170" y="60" width="83.3" height="22" rx="3" style="fill:var(--blue)" opacity="0.7"><title>8 of 24 (33.3%), $0.0174 per trial, 173 s</title></rect>
+        <text x="259" y="76" class="s12">8 of 24 · $0.0174</text>
+        <text x="12" y="112" class="ink s14">Muse Glimmer</text><text x="12" y="128" class="faint s12">Meta</text>
+        <rect x="170" y="102" width="83.3" height="22" rx="3" style="fill:var(--blue)" opacity="0.7"><title>8 of 24 (33.3%), $0.0127 per trial, 186 s</title></rect>
+        <text x="259" y="118" class="s12">8 of 24 · $0.0127</text>
+        <text x="170" y="154" class="faint s12" text-anchor="middle">0</text>
+        <text x="295" y="154" class="faint s12" text-anchor="middle">50%</text>
+        <text x="420" y="154" class="faint s12" text-anchor="middle">100%</text>
+      </svg>
+      <figcaption>Passes out of 24 trials, with the average cost of one trial. The default model was also the cheapest and the fastest.</figcaption>
+    </figure>
+    <p>The same six questions defeated all three models, so those failures belong to the agent and the websites, not to any one model. The project also sent one task through three very different AI services, a marketplace, NVIDIA's own service, and a server it ran itself on a rented GPU, without changing a line of code. All three passed.</p>
+  </div>
+
+  <div class="sub">
+    <h3>Do screenshots help? Barely.</h3>
+    <p>Reading pages as text alone passed 10 of 24 trials. Adding screenshots when the text looked thin passed 11 of 24, for 10% more cost. One extra pass is within the noise. On these sites, the agent doesn't fail for lack of seeing the page.</p>
+  </div>
+</section>
+
+<!-- ============ 7 ============ -->
+<section id="failures">
+  <div class="part"><span class="eyebrow">Part 7</span><h2>Why it fails</h2></div>
+  <p>Across all 195 marked trials, 81 passed and 114 failed. The judge gave every failure a cause, which turns a failure rate into a list of things to fix.</p>
+  <figure>
+    <svg viewBox="0 0 480 172" role="img" aria-labelledby="failT">
+      <title id="failT">195 trials: 81 passed, 114 failed. Of the failures, 83 were planning, 16 navigation, 15 grounding.</title>
+      <text x="12" y="20" class="faint s12">All 195 trials</text>
+      <rect x="12" y="28" width="188.6" height="28" rx="4" style="fill:var(--green)"><title>81 passed</title></rect>
+      <rect x="202.6" y="28" width="265.4" height="28" rx="4" style="fill:var(--red)"><title>114 failed</title></rect>
+      <text x="22" y="47" class="c-bg s13 b">81 passed</text>
+      <text x="212" y="47" class="c-bg s13 b">114 failed</text>
+      <path d="M202.6 58 L12 92 M468 58 L468 92" class="stroke-line" stroke-width="1" fill="none"/>
+      <rect x="12" y="96" width="329.1" height="28" rx="4" style="fill:var(--red)"><title>Planning: 83</title></rect>
+      <rect x="343.1" y="96" width="63.4" height="28" rx="4" style="fill:var(--red)"><title>Navigation: 16</title></rect>
+      <rect x="408.5" y="96" width="59.5" height="28" rx="4" style="fill:var(--red)"><title>Grounding: 15</title></rect>
+      <text x="22" y="115" class="c-bg s13 b">Planning · 83</text>
+      <text x="374.8" y="115" class="c-bg s13 b" text-anchor="middle">16</text>
+      <text x="438.2" y="115" class="c-bg s13 b" text-anchor="middle">15</text>
+      <text x="374.8" y="144" class="s12" text-anchor="middle">Navigation</text>
+      <text x="468" y="162" class="s12" text-anchor="end">Grounding</text>
+    </svg>
+    <figcaption>The lower bar zooms in on the 114 failures. Most are planning: the AI had the wrong idea, not the wrong button.</figcaption>
+  </figure>
+  <dl class="defs">
+    <dt>Planning</dt><dd>the wrong idea: gave up early, skipped a filter, scrolled in circles, guessed</dd>
+    <dt>Navigation</dt><dd>lost between pages, or guessed web addresses that didn't exist</dd>
+    <dt>Grounding</dt><dd>the right idea, the wrong thing on the page</dd>
+  </dl>
+
+  <div class="sub">
+    <h3>The right idea, the wrong box</h3>
+    <p>On the Ministry of Education's school finder, the task was to filter the list to primary schools in the Bishan area and report how many there are. The answer is 3. The agent knew it had to filter by area, but it typed “Bishan” into box [4], a box for finding schools near a home address, instead of choosing Bishan from the dropdown [5].</p>
+    <figure>
+      <svg viewBox="0 0 480 168" role="img" aria-labelledby="boxT">
+        <title id="boxT">The agent typed Bishan into the address box, element 4, instead of choosing it in the area dropdown, element 5. Nothing was filtered and it answered 182.</title>
+        <rect x="12" y="22" width="290" height="38" rx="7" style="fill:var(--surface)" class="stroke-red" stroke-width="1.8"/>
+        <text x="28" y="46" class="c-red s14 mono">Bishan</text>
+        <text x="90" y="46" class="faint s12">← address or postal code</text>
+        <g class="tag"><rect x="5" y="13" width="18" height="16" rx="4"/><text x="14" y="25" text-anchor="middle">4</text></g>
+        <text x="318" y="38" class="c-red s13">typed here</text>
+        <text x="318" y="55" class="s12">near a home address</text>
+        <rect x="12" y="78" width="290" height="38" rx="7" style="fill:var(--surface)" class="stroke-green dash" stroke-width="1.8"/>
+        <text x="28" y="102" class="s13">Select an area</text>
+        <path d="M282 94 l5 6 l5 -6" class="arrow stroke-soft" stroke-width="1.6"/>
+        <g class="tag"><rect x="5" y="69" width="18" height="16" rx="4"/><text x="14" y="81" text-anchor="middle">5</text></g>
+        <text x="318" y="94" class="c-green s13">should have chosen</text>
+        <text x="318" y="111" class="c-green s13">Bishan here</text>
+        <text x="12" y="152" class="s14">Answered <tspan class="c-red b">182</tspan>, every primary school in the country</text>
+        <text x="468" y="152" class="s14" text-anchor="end">Right: <tspan class="c-green b">3</tspan></text>
+      </svg>
+      <figcaption>The agent reported success; the answer check marked it a fail. On this site, typing into the wrong box accounts for 8 of the 12 grounding failures.</figcaption>
+    </figure>
+  </div>
+
+  <div class="sub">
+    <h3>Stuck behind a pop-up</h3>
+    <p>On the Ministry of Manpower site, the task was to find how many days of annual leave an employee gets in their fourth year (the answer is 10). On a first visit, the site shows a “take a short tour” box. Behind the box, a see-through dark shade is laid over the whole page, so a click aimed at any link lands on the shade instead. The way out is one click on [5] Skip.</p>
+    <figure>
+      <svg viewBox="0 0 480 424" role="img" aria-labelledby="popT">
+        <title id="popT">The page as three stacked layers. On arrival, a click aimed at a link lands on the see-through shade; only Skip on the tour box can be clicked. After scrolling, the tour box is gone but the shade stays, so every click lands on the shade.</title>
+        <defs>
+          <pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" style="stroke:var(--soft)" stroke-width="1.1" opacity="0.55"/></pattern>
+        </defs>
+
+        <!-- ===== 1 · on arrival ===== -->
+        <text x="12" y="16" class="ink s14 b">1 · When the page opens</text>
+        <!-- guides between layers -->
+        <g class="stroke-line dash" stroke-width="1" fill="none">
+          <path d="M40 130 L40 180 M250 130 L250 180 M300 94 L300 144 M90 94 L90 144"/>
+        </g>
+        <!-- page -->
+        <polygon points="40,180 250,180 300,144 90,144" class="frame"/>
+        <g class="stroke-blue" stroke-width="3" stroke-linecap="round">
+          <line x1="62" y1="172" x2="122" y2="172"/><line x1="150" y1="160" x2="220" y2="160"/><line x1="96" y1="151" x2="150" y2="151"/>
+        </g>
+        <!-- shade -->
+        <polygon points="40,130 250,130 300,94 90,94" style="fill:var(--scrim)"/>
+        <polygon points="40,130 250,130 300,94 90,94" fill="url(#hatch)" class="stroke-soft" stroke-width="1.2"/>
+        <!-- tour box -->
+        <polygon points="100,80 210,80 238,60 128,60" style="fill:var(--surface-2)" class="stroke-soft" stroke-width="1.4"/>
+        <polygon points="166,78 200,78 213,69 179,69" style="fill:var(--green-tint)" class="stroke-green" stroke-width="1.6"/>
+        <!-- click at a link: stops at the shade -->
+        <text x="70" y="32" class="c-red s12" text-anchor="middle">a link</text>
+        <path d="M70 38 L70 108" class="arrow stroke-red" stroke-width="2" marker-end="url(#ahRed)"/>
+        <path d="M65 112 L75 122 M75 112 L65 122" class="arrow stroke-red" stroke-width="2.4"/>
+        <path d="M70 128 L70 168" class="stroke-faint" stroke-width="1.2" stroke-dasharray="2 4" fill="none"/>
+        <!-- click at Skip: lands -->
+        <text x="190" y="32" class="c-green s12" text-anchor="middle">Skip</text>
+        <path d="M190 38 L190 64" class="arrow stroke-green" stroke-width="2" marker-end="url(#ahGreen)"/>
+        <!-- labels -->
+        <text x="316" y="68" class="ink s14">Tour box</text>
+        <text x="316" y="84" class="c-green s12">with [5] Skip on it</text>
+        <text x="316" y="112" class="ink s14">See-through shade</text>
+        <text x="316" y="128" class="s12">covers the whole page</text>
+        <text x="316" y="166" class="ink s14">The page and its links</text>
+
+        <line x1="12" y1="200" x2="468" y2="200" class="stroke-line" stroke-width="1"/>
+
+        <!-- ===== 2 · after scrolling ===== -->
+        <text x="12" y="228" class="ink s14 b">2 · After the agent scrolls instead</text>
+        <g class="stroke-line dash" stroke-width="1" fill="none">
+          <path d="M40 340 L40 390 M250 340 L250 390 M300 304 L300 354 M90 304 L90 354"/>
+        </g>
+        <polygon points="40,390 250,390 300,354 90,354" class="frame"/>
+        <g class="stroke-blue" stroke-width="3" stroke-linecap="round">
+          <line x1="58" y1="383" x2="110" y2="383"/><line x1="128" y1="372" x2="200" y2="372"/><line x1="104" y1="362" x2="168" y2="362"/>
+        </g>
+        <polygon points="40,340 250,340 300,304 90,304" style="fill:var(--scrim)"/>
+        <polygon points="40,340 250,340 300,304 90,304" fill="url(#hatch)" class="stroke-red" stroke-width="1.4"/>
+        <g>
+          <path d="M70 248 L70 316" class="arrow stroke-red" stroke-width="2" marker-end="url(#ahRed)"/>
+          <path d="M65 321 L75 331 M75 321 L65 331" class="arrow stroke-red" stroke-width="2.4"/>
+          <path d="M130 248 L130 306" class="arrow stroke-red" stroke-width="2" marker-end="url(#ahRed)"/>
+          <path d="M125 312 L135 322 M135 312 L125 322" class="arrow stroke-red" stroke-width="2.4"/>
+          <path d="M190 248 L190 306" class="arrow stroke-red" stroke-width="2" marker-end="url(#ahRed)"/>
+          <path d="M185 312 L195 322 M195 312 L185 322" class="arrow stroke-red" stroke-width="2.4"/>
+        </g>
+        <text x="316" y="262" class="faint s14">No tour box</text>
+        <text x="316" y="278" class="s12">it scrolled out of view</text>
+        <text x="316" y="322" class="c-red s14">The shade stays</text>
+        <text x="316" y="338" class="s12">every click lands on it</text>
+        <text x="316" y="376" class="ink s14">The page and its links</text>
+        <text x="12" y="418" class="s13">Clickable things the agent finds: <tspan class="c-red b">none</tspan>, on every step</text>
+      </svg>
+      <figcaption>Picture the page as layers, seen from the side. A click lands on whatever is on top. On arrival, the only things above the shade are the tour box's buttons, so Skip is the one click that helps. The agent clicked the search icon and then scrolled. The tour box scrolled away, but the shade stayed over the page, so every click would hit the shade. With nothing left to click, the agent scrolled up and down until it ran out of steps.</figcaption>
+    </figure>
+    <p>The two Ministry of Manpower tasks failed all 32 of their trials, on every model. Teaching the agent to dismiss a pop-up before anything else is the clearest next improvement, and now there is a measurement to prove whether it worked.</p>
+  </div>
+</section>
+
+<!-- ============ 8 ============ -->
+<section id="takeaways">
+  <div class="part"><span class="eyebrow">Part 8</span><h2>What to take away</h2></div>
+  <p>Strip away the details and four ideas remain. Each one applies to almost any AI that acts in the world, not only to this one.</p>
+  <ol class="takeaways">
+    <li><div><strong>Let the AI point instead of describe.</strong>Numbers on the page turn a vague sentence into an exact choice, and remove a whole class of silent mistakes.</div></li>
+    <li><div><strong>Check every action before it happens, and explain every refusal.</strong>A closed list of seven moves and a gate in front of the browser keep the AI inside safe bounds. A clear reason gives it something to fix.</div></li>
+    <li><div><strong>Mark the work with code, then check the marker against a person.</strong>An AI saying “success” is a claim. A program checking the answer and the page is evidence.</div></li>
+    <li><div><strong>Learn from success, but prove the lesson first.</strong>A skill is kept only after it works again with different values. Then it does the same job in a fifth of the steps.</div></li>
+  </ol>
+  <hr class="quiet">
+  <p class="aside">The limits are stated plainly too. Two or three trials per question is a small sample, so differences of a trial or two are noise. The agent only reads public pages: no logins, no forms that change anything, no purchases. Some websites refuse a browser with no visible window, and those were left out of the benchmark.</p>
+  <p>Everything above can be re-checked without an account or a key. The project ships with about 1,600 tests and a small practice website that runs on your own computer, and a single command re-runs the whole evaluation offline on it.</p>
+  <p class="end">The code, the results tables and one complete recorded run are at <a href="https://github.com/edangx100/web-action-agent">github.com/edangx100/web-action-agent</a>.</p>
+</section>
+
+</main>
+</div>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  function store(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function read(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+
+  /* ---------- theme ---------- */
+  var themeBtn = document.getElementById('themeBtn');
+  var mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null;
+  function isLight() {
+    var t = root.getAttribute('data-theme');
+    if (t) return t === 'light';
+    return !!(mq && mq.matches);
+  }
+  function syncThemeLabel() {
+    themeBtn.setAttribute('aria-label', isLight() ? 'Switch to dark theme' : 'Switch to light theme');
+  }
+  var savedTheme = read('waa-theme');
+  if (savedTheme === 'light' || savedTheme === 'dark') root.setAttribute('data-theme', savedTheme);
+  syncThemeLabel();
+  themeBtn.addEventListener('click', function () {
+    var next = isLight() ? 'dark' : 'light';
+    root.setAttribute('data-theme', next);
+    store('waa-theme', next);
+    syncThemeLabel();
+  });
+  if (mq && mq.addEventListener) mq.addEventListener('change', syncThemeLabel);
+
+  /* ---------- text size ---------- */
+  var scales = [0.9, 1, 1.1, 1.2, 1.32];
+  var si = scales.indexOf(parseFloat(read('waa-scale')));
+  if (si < 0) si = 1;
+  var smaller = document.getElementById('smaller'), larger = document.getElementById('larger');
+  function applyScale() {
+    root.style.setProperty('--scale', scales[si]);
+    smaller.disabled = si === 0;
+    larger.disabled = si === scales.length - 1;
+  }
+  applyScale();
+  smaller.addEventListener('click', function () { if (si > 0) { si--; applyScale(); store('waa-scale', scales[si]); } });
+  larger.addEventListener('click', function () { if (si < scales.length - 1) { si++; applyScale(); store('waa-scale', scales[si]); } });
+
+  /* ---------- tuck the reading tools away while scrolling down ---------- */
+  var tools = document.querySelector('.tools'), lastY = window.scrollY, ticking = false;
+  window.addEventListener('scroll', function () {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(function () {
+      var y = window.scrollY;
+      if (y < 80 || y < lastY - 4) tools.classList.remove('tucked');
+      else if (y > lastY + 4) tools.classList.add('tucked');
+      lastY = y; ticking = false;
+    });
+  }, { passive: true });
+  tools.addEventListener('focusin', function () { tools.classList.remove('tucked'); });
+
+  /* ---------- Set-of-Marks toggle ---------- */
+  var marksFig = document.getElementById('marksFig');
+  var marksBtn = document.getElementById('marksBtn');
+  var marksList = document.getElementById('marksList');
+  var marksCap = document.getElementById('marksCap');
+  marksBtn.addEventListener('click', function () {
+    var on = !marksFig.classList.contains('is-marked');
+    marksFig.classList.toggle('is-marked', on);
+    marksBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    marksBtn.textContent = on ? 'Remove the numbers' : 'Add the numbers';
+    marksList.hidden = !on;
+    marksCap.textContent = on
+      ? 'With numbers, every clickable thing has a tag, and the AI is handed the same numbers as a list. It replies “click 4”, which can only mean the link “Taxes”.'
+      : 'Without numbers, the AI can only describe what it wants. Three things on this page could be “the round button near the top”.';
+  });
+
+  /* ---------- the loop ---------- */
+  var L = [
+    { node: null, label: 'Ready', text: 'The agent opens a fresh, private browser on the IRAS home page. It has the question and nothing else.' },
+    { node: 'look', label: 'Step 1 · Look', text: 'It lists everything on screen a person could click, gives each one a number, and reads the page’s main text.' },
+    { node: 'decide', label: 'Step 1 · Decide', text: 'The AI reads the list and replies with exactly one action: click 4, the link called “Taxes”.' },
+    { node: 'check', label: 'Step 1 · Check', text: 'The gate confirms that element 4 exists on the page the AI was shown, and that the click keeps the run on iras.gov.sg.' },
+    { node: 'act', label: 'Step 1 · Act', text: 'The browser clicks. A menu opens on the same page. The result is written to the run’s record before anything else happens.', line: 0 },
+    { node: 'act', label: 'Steps 2 and 3', text: 'Round the loop twice more: Individual Income Tax, then Tax residency and tax rates. The numbers are new each time, because the page is numbered again on every look.', line: 2 },
+    { node: 'act', label: 'Step 4', text: 'It clicks the card “Individual Income Tax rates”, and the rates page opens. The table is now part of the page text.', line: 3 },
+    { node: 'decide', label: 'Step 5 · Decide', text: 'The AI chooses the seventh action, finish, with its answer: 3350.', line: 4 },
+    { node: 'mark', label: 'Afterwards · Mark', text: 'A program, not the AI, checks the run. The answer is 3,350, and the run ended on the rates page. Both pass. Five AI calls, $0.0030 in all.', line: 6 }
+  ];
+  var lines = [
+    '  1  act    click [4] link "Taxes" <span class="ok">-> ok</span> (0.21s)',
+    '  2  act    click [8] link "Individual Income Tax" <span class="ok">-> ok</span> (0.14s)',
+    '  3  act    click [39] link "Tax residency and tax rates" <span class="ok">-> ok</span> (0.52s)',
+    '  4  act    click [19] link "Individual Income Tax rates …" <span class="ok">-> ok</span> (0.40s)',
+    '  5  <span class="ans">done   success: 3350</span>',
+    '',
+    '<span class="muted">5 calls, 20,161 tokens, $0.0030</span>'
+  ];
+  var head = '<span class="muted">$ waa run --start-url https://www.iras.gov.sg/ "…"</span>';
+  var li = 0;
+  var nodes = document.querySelectorAll('#loopSvg [data-node]');
+  var lLabel = document.getElementById('loopLabel'), lText = document.getElementById('loopText'), lTerm = document.getElementById('loopTerm');
+  var bBack = document.getElementById('loopBack'), bNext = document.getElementById('loopNext'), bReset = document.getElementById('loopReset');
+  function linesUpTo(i) {
+    var max = -1;
+    for (var k = 0; k <= i; k++) if (typeof L[k].line === 'number') max = L[k].line;
+    return max;
+  }
+  function renderLoop() {
+    var s = L[li];
+    for (var n = 0; n < nodes.length; n++) nodes[n].classList.toggle('on', nodes[n].getAttribute('data-node') === s.node);
+    lLabel.textContent = s.label;
+    lText.textContent = s.text;
+    var upto = linesUpTo(li), out = head;
+    for (var j = 0; j <= upto; j++) out += '\n' + lines[j];
+    lTerm.innerHTML = out;
+    bBack.disabled = li === 0;
+    bNext.disabled = li === L.length - 1;
+    bNext.textContent = li === L.length - 1 ? 'Run finished' : 'Next step →';
+  }
+  bNext.addEventListener('click', function () { if (li < L.length - 1) { li++; renderLoop(); } });
+  bBack.addEventListener('click', function () { if (li > 0) { li--; renderLoop(); } });
+  bReset.addEventListener('click', function () { li = 0; renderLoop(); });
+  renderLoop();
+
+  /* ---------- the gate ---------- */
+  var G = {
+    ok: { proposal: 'click 4', pass: true, code: 'allowed', msg: 'Element 4 is the link “Taxes” on this page, and the click keeps the run on iras.gov.sg. The browser does it.' },
+    missing: { proposal: 'click 12', pass: false, code: 'unknown_element', msg: 'Sent back to the AI: “There is no element 12 on this page; the page offers elements 1 to 8. Use a number from the list above.”' },
+    offsite: { proposal: 'go to example.com', pass: false, code: 'blocked_navigation', msg: 'Sent back to the AI: this run may only visit iras.gov.sg, so the address is refused before the browser is ever asked.' }
+  };
+  var gateSvg = document.getElementById('gateSvg');
+  var gProp = document.getElementById('gateProposal'), gCode = document.getElementById('gateCode');
+  var gVerdict = document.getElementById('gateVerdict'), gMsg = document.getElementById('gateMsg');
+  var gBtns = document.querySelectorAll('[data-gate]');
+  for (var b = 0; b < gBtns.length; b++) {
+    gBtns[b].addEventListener('click', function () {
+      var c = G[this.getAttribute('data-gate')];
+      for (var x = 0; x < gBtns.length; x++) gBtns[x].setAttribute('aria-pressed', gBtns[x] === this ? 'true' : 'false');
+      gateSvg.setAttribute('class', c.pass ? 'state-pass' : 'state-fail');
+      gProp.textContent = c.proposal;
+      gCode.textContent = c.pass ? 'unknown_element' : c.code;
+      gVerdict.textContent = c.code;
+      gVerdict.className = 'code ' + (c.pass ? 'ok' : 'no');
+      gMsg.textContent = c.msg;
+    });
+  }
+})();
+</script>
+</body>
+</html>
