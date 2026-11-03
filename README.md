@@ -19,8 +19,14 @@
   <a href="#how-it-works">How it works</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#why-tasks-fail">Why tasks fail</a> ·
-  <a href="#reference">Reference</a>
+  <a href="#reference">Reference</a> ·
+  <a href="https://edangx100.github.io/web-action-agent/docs/explainer"><b>Beginner's guide</b></a>
 </p>
+
+> **New to AI agents?** Start with the illustrated beginner's guide:
+> **[edangx100.github.io/web-action-agent/docs/explainer](https://edangx100.github.io/web-action-agent/docs/explainer)**.
+> It explains the whole project in plain words, with diagrams you can click
+> through, and reads well on a phone.
 
 ---
 
